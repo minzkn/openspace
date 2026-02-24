@@ -1,0 +1,51 @@
+{% extends "layout.html" %}
+{% block title %}워크스페이스 관리 - OpenSpace{% endblock %}
+{% block page_title %}워크스페이스 관리{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <div class="toolbar-right">
+    <button class="btn btn-primary" onclick="showCreateWSModal()">+ 새 워크스페이스</button>
+  </div>
+</div>
+
+<div class="table-container">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>이름</th>
+        <th>상태</th>
+        <th>시트 수</th>
+        <th>생성일</th>
+        <th>작업</th>
+      </tr>
+    </thead>
+    <tbody id="ws-tbody">
+      <tr><td colspan="5" class="loading">로딩 중...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<template id="ws-form-tpl">
+  <form id="ws-form" onsubmit="submitWSForm(event)">
+    <div class="form-group">
+      <label>워크스페이스 이름 *</label>
+      <input type="text" id="f-ws-name" required>
+    </div>
+    <div class="form-group">
+      <label>서식 선택 *</label>
+      <select id="f-ws-template" required>
+        <option value="">선택하세요...</option>
+      </select>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">취소</button>
+      <button type="submit" class="btn btn-primary">생성</button>
+    </div>
+  </form>
+</template>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/workspaces.js"></script>
+{% endblock %}

@@ -1,0 +1,119 @@
+{% extends "layout.html" %}
+{% block title %}{{ workspace.name }} - OpenSpace{% endblock %}
+{% block page_title %}{{ workspace.name }}{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsuites/dist/jsuites.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.css">
+{% endblock %}
+
+{% block content %}
+<div class="workspace-header">
+  <div class="workspace-info">
+    <span class="badge {{ workspace.status|lower }}" id="ws-status-badge">{{ workspace.status }}</span>
+    <span id="ws-conn-indicator" class="conn-dot disconnected" title="연결 상태"></span>
+    <span id="ws-activity" class="ws-activity"></span>
+  </div>
+  <div class="workspace-actions">
+    <button class="btn btn-sm btn-secondary" onclick="exportWorkspace()">다운로드</button>
+    {% if is_admin %}
+    <label class="btn btn-sm btn-secondary">
+      업로드
+      <input type="file" accept=".xlsx" style="display:none" onchange="importWorkspace(this)">
+    </label>
+    <button class="btn btn-sm btn-danger" id="close-btn" onclick="toggleClose()">
+      {% if workspace.status == 'OPEN' %}마감{% else %}재개{% endif %}
+    </button>
+    {% endif %}
+  </div>
+</div>
+
+<!-- 시트 탭 -->
+<div class="sheet-tabs-row">
+  <div class="sheet-tabs" id="sheet-tabs"></div>
+  {% if is_admin %}
+  <button class="btn btn-sm btn-ghost" onclick="addWsSheet()" title="시트 추가" style="padding:4px 8px;font-size:18px">+</button>
+  {% endif %}
+</div>
+
+<!-- 포맷 툴바 (관리자 및 편집 가능 상태에서 표시) -->
+<div class="format-toolbar" id="format-toolbar" style="display:none">
+  <button class="fmt-btn" id="fmt-bold" title="굵게" onclick="fmtBold()"><b>B</b></button>
+  <button class="fmt-btn" id="fmt-italic" title="기울임" onclick="fmtItalic()"><i>I</i></button>
+  <button class="fmt-btn" id="fmt-underline" title="밑줄" onclick="fmtUnderline()"><u>U</u></button>
+  <div class="fmt-sep"></div>
+  <button class="fmt-btn" id="fmt-color" title="글자색" onclick="toggleDropdown('color-drop')" style="position:relative">
+    A<span class="color-bar" id="fmt-color-bar" style="background:#000000"></span>
+    <div class="fmt-dropdown" id="color-drop">
+      <div class="color-swatches" id="color-swatches"></div>
+      <div class="fmt-dropdown-item" onclick="fmtColor(null)">자동 (기본색)</div>
+    </div>
+  </button>
+  <button class="fmt-btn" id="fmt-bg" title="배경색" onclick="toggleDropdown('bg-drop')" style="position:relative">
+    🎨<span class="color-bar" id="fmt-bg-bar" style="background:transparent;border:1px solid #ccc"></span>
+    <div class="fmt-dropdown" id="bg-drop">
+      <div class="color-swatches" id="bg-swatches"></div>
+      <div class="fmt-dropdown-item" onclick="fmtBg(null)">없음 (배경 제거)</div>
+    </div>
+  </button>
+  <div class="fmt-sep"></div>
+  <button class="fmt-btn" id="fmt-align-left" title="왼쪽 정렬" onclick="fmtAlign('left')">⬅</button>
+  <button class="fmt-btn" id="fmt-align-center" title="가운데 정렬" onclick="fmtAlign('center')">≡</button>
+  <button class="fmt-btn" id="fmt-align-right" title="오른쪽 정렬" onclick="fmtAlign('right')">➡</button>
+  <div class="fmt-sep"></div>
+  <button class="fmt-btn" id="fmt-wrap" title="줄바꿈" onclick="fmtWrap()">↵</button>
+  <div class="fmt-sep"></div>
+  <button class="fmt-btn" title="셀 병합" onclick="fmtMerge()">⊞</button>
+  <button class="fmt-btn" title="병합 해제" onclick="fmtUnmerge()">⊟</button>
+  <div class="fmt-sep"></div>
+  <button class="fmt-btn" title="테두리" onclick="toggleDropdown('border-drop')" style="position:relative">
+    ⊡
+    <div class="fmt-dropdown" id="border-drop">
+      <div class="fmt-dropdown-item" onclick="fmtBorder('all')">모든 테두리</div>
+      <div class="fmt-dropdown-item" onclick="fmtBorder('outer')">바깥 테두리</div>
+      <div class="fmt-dropdown-item" onclick="fmtBorder('none')">테두리 없음</div>
+      <div class="fmt-dropdown-item" onclick="fmtBorder('bottom')">아래쪽만</div>
+    </div>
+  </button>
+</div>
+
+<!-- 스프레드시트 컨테이너 -->
+<div id="spreadsheet-container">
+  <div id="spreadsheet"></div>
+</div>
+
+<!-- CLOSED 오버레이 -->
+{% if workspace.status == 'CLOSED' and not is_admin %}
+<div id="closed-overlay" class="closed-overlay">
+  <div class="closed-message">이 워크스페이스는 마감되었습니다.</div>
+</div>
+{% endif %}
+
+<!-- workspace 데이터 -->
+<!-- 시트 이름변경 모달 -->
+<template id="rename-ws-sheet-tpl">
+  <form onsubmit="submitRenameWsSheet(event)" style="display:flex;flex-direction:column;gap:12px">
+    <div class="form-group">
+      <label>시트 이름</label>
+      <input type="text" id="f-ws-sheet-name" required>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">취소</button>
+      <button type="submit" class="btn btn-primary">변경</button>
+    </div>
+  </form>
+</template>
+
+<script id="workspace-data" type="application/json">{{ workspace_data_json | safe }}</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/jsuites/dist/jsuites.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/index.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@jspreadsheet/formula@2/dist/index.js"></script>
+<script>
+  const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
+  const CURRENT_USER = {{ current_user.username | tojson }};
+</script>
+<script src="/static/js/workspace.js"></script>
+{% endblock %}

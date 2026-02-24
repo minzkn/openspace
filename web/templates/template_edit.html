@@ -1,0 +1,148 @@
+{% extends "layout.html" %}
+{% block title %}{{ template.name }} 편집 - OpenSpace{% endblock %}
+{% block page_title %}서식 편집: {{ template.name }}{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsuites/dist/jsuites.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.css">
+<style>
+.editor-topbar { display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
+.editor-topbar .left { flex:1; display:flex; align-items:center; gap:8px; }
+.sheet-tabs-wrap { display:flex; align-items:center; gap:2px; border-bottom:2px solid var(--border); padding-bottom:0; margin-bottom:4px; overflow-x:auto; }
+.sheet-tab { display:flex; align-items:center; gap:4px; padding:5px 12px; border:1px solid var(--border); border-bottom:none; border-radius:4px 4px 0 0; cursor:pointer; font-size:13px; background:var(--bg); white-space:nowrap; }
+.sheet-tab.active { background:var(--surface); border-color:var(--primary); color:var(--primary); font-weight:600; }
+.sheet-tab .tab-del { font-size:14px; color:#94a3b8; cursor:pointer; padding:0 2px; line-height:1; }
+.sheet-tab .tab-del:hover { color:var(--danger); }
+.sheet-add-btn { padding:5px 10px; border:1px dashed var(--border); border-radius:4px; cursor:pointer; font-size:18px; color:var(--text-muted); background:none; }
+.sheet-add-btn:hover { color:var(--primary); border-color:var(--primary); }
+
+/* 컬럼 속성 패널 */
+.col-panel { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:12px; margin-bottom:8px; display:none; }
+.col-panel.visible { display:block; }
+.col-panel-title { font-weight:600; margin-bottom:10px; font-size:13px; color:var(--text-muted); }
+.col-panel-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.col-panel-row label { font-size:12px; font-weight:500; min-width:60px; }
+.col-panel-row input, .col-panel-row select { padding:4px 8px; border:1px solid var(--border); border-radius:4px; font-size:13px; }
+.col-panel-row input[type=number] { width:80px; }
+.col-panel-row .sep { color:var(--border); }
+
+#spreadsheet-wrap { position:relative; }
+.save-indicator { position:fixed; bottom:16px; right:16px; background:#0f172a; color:#fff; padding:6px 14px; border-radius:20px; font-size:12px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:999; }
+.save-indicator.show { opacity:1; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- 상단 툴바 -->
+<div class="editor-topbar">
+  <div class="left">
+    <a href="/admin/templates" class="btn btn-ghost btn-sm">← 목록</a>
+    <span style="color:var(--text-muted)">|</span>
+    <strong id="tmpl-name-display">{{ template.name }}</strong>
+  </div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap">
+    <button class="btn btn-sm btn-secondary" onclick="addColumn()">+ 컬럼 추가</button>
+    <button class="btn btn-sm btn-secondary" onclick="showColPanel()">컬럼 속성</button>
+    <button class="btn btn-sm btn-secondary" onclick="downloadTemplate()">xlsx 다운로드</button>
+    <span id="save-status" style="font-size:12px;color:var(--text-muted);align-self:center"></span>
+  </div>
+</div>
+
+<!-- 컬럼 속성 패널 -->
+<div class="col-panel" id="col-panel">
+  <div class="col-panel-title">선택 컬럼 속성 (컬럼 헤더 클릭 후 적용)</div>
+  <div class="col-panel-row">
+    <label>헤더명</label>
+    <input type="text" id="cp-header" placeholder="컬럼명">
+    <span class="sep">|</span>
+    <label>타입</label>
+    <select id="cp-type">
+      <option value="text">텍스트</option>
+      <option value="number">숫자</option>
+      <option value="date">날짜</option>
+      <option value="checkbox">체크박스</option>
+    </select>
+    <span class="sep">|</span>
+    <label>너비</label>
+    <input type="number" id="cp-width" value="120" min="40" max="500">
+    <span class="sep">|</span>
+    <label style="min-width:auto"><input type="checkbox" id="cp-readonly"> 읽기전용</label>
+    <button class="btn btn-sm btn-primary" onclick="applyColProps()">적용</button>
+    <button class="btn btn-sm btn-danger" onclick="deleteColumn()">컬럼 삭제</button>
+  </div>
+</div>
+
+<!-- 시트 탭 -->
+<div class="sheet-tabs-wrap" id="sheet-tabs"></div>
+
+<!-- 포맷 툴바 -->
+<div class="format-toolbar" id="format-toolbar">
+  <button class="fmt-btn" id="fmt-bold" title="굵게 (Bold)" onclick="fmtBold()"><b>B</b></button>
+  <button class="fmt-btn" id="fmt-italic" title="기울임 (Italic)" onclick="fmtItalic()"><i>I</i></button>
+  <button class="fmt-btn" id="fmt-underline" title="밑줄 (Underline)" onclick="fmtUnderline()"><u>U</u></button>
+  <div class="fmt-sep"></div>
+  <button class="fmt-btn" id="fmt-color" title="글자색" onclick="toggleDropdown('color-drop')" style="position:relative">
+    A<span class="color-bar" id="fmt-color-bar" style="background:#000000"></span>
+    <div class="fmt-dropdown" id="color-drop">
+      <div class="color-swatches" id="color-swatches"></div>
+      <div class="fmt-dropdown-item" onclick="fmtColor(null)">자동 (기본색)</div>
+    </div>
+  </button>
+  <button class="fmt-btn" id="fmt-bg" title="배경색" onclick="toggleDropdown('bg-drop')" style="position:relative">
+    🎨<span class="color-bar" id="fmt-bg-bar" style="background:transparent;border:1px solid #ccc"></span>
+    <div class="fmt-dropdown" id="bg-drop">
+      <div class="color-swatches" id="bg-swatches"></div>
+      <div class="fmt-dropdown-item" onclick="fmtBg(null)">없음 (배경 제거)</div>
+    </div>
+  </button>
+  <div class="fmt-sep"></div>
+  <button class="fmt-btn" id="fmt-align-left" title="왼쪽 정렬" onclick="fmtAlign('left')">⬅</button>
+  <button class="fmt-btn" id="fmt-align-center" title="가운데 정렬" onclick="fmtAlign('center')">≡</button>
+  <button class="fmt-btn" id="fmt-align-right" title="오른쪽 정렬" onclick="fmtAlign('right')">➡</button>
+  <div class="fmt-sep"></div>
+  <button class="fmt-btn" id="fmt-wrap" title="줄바꿈" onclick="fmtWrap()">↵</button>
+  <div class="fmt-sep"></div>
+  <button class="fmt-btn" title="셀 병합" onclick="fmtMerge()">⊞</button>
+  <button class="fmt-btn" title="병합 해제" onclick="fmtUnmerge()">⊟</button>
+  <div class="fmt-sep"></div>
+  <button class="fmt-btn" title="테두리" onclick="toggleDropdown('border-drop')" style="position:relative">
+    ⊡
+    <div class="fmt-dropdown" id="border-drop">
+      <div class="fmt-dropdown-item" onclick="fmtBorder('all')">모든 테두리</div>
+      <div class="fmt-dropdown-item" onclick="fmtBorder('outer')">바깥 테두리</div>
+      <div class="fmt-dropdown-item" onclick="fmtBorder('none')">테두리 없음</div>
+      <div class="fmt-dropdown-item" onclick="fmtBorder('bottom')">아래쪽만</div>
+    </div>
+  </button>
+</div>
+
+<!-- 스프레드시트 -->
+<div id="spreadsheet-wrap">
+  <div id="spreadsheet"></div>
+</div>
+
+<div class="save-indicator" id="save-indicator">저장 중...</div>
+
+<!-- 시트 이름 변경 모달 -->
+<template id="rename-sheet-tpl">
+  <form onsubmit="submitRenameSheet(event)" style="display:flex;flex-direction:column;gap:12px">
+    <div class="form-group">
+      <label>시트 이름</label>
+      <input type="text" id="f-sheet-name" required>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">취소</button>
+      <button type="submit" class="btn btn-primary">변경</button>
+    </div>
+  </form>
+</template>
+
+<script id="template-data" type="application/json">{{ template_data_json | safe }}</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/jsuites/dist/jsuites.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/index.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@jspreadsheet/formula@2/dist/index.js"></script>
+<script src="/static/js/template_edit.js"></script>
+{% endblock %}

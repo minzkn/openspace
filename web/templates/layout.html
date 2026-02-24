@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}OpenSpace{% endblock %}</title>
+<link rel="stylesheet" href="/static/css/style.css">
+{% block head %}{% endblock %}
+</head>
+<body>
+<div class="app-layout">
+  <!-- 사이드바 -->
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <span class="logo">OpenSpace</span>
+    </div>
+    <ul class="sidebar-menu">
+      <li><a href="/dashboard" class="{% if request.url.path == '/dashboard' %}active{% endif %}">
+        <span class="icon">&#9632;</span> 대시보드
+      </a></li>
+
+      {% if is_admin %}
+      <li class="menu-group">관리</li>
+      <li><a href="/admin/users" class="{% if '/admin/users' in request.url.path and 'fields' not in request.url.path %}active{% endif %}">
+        <span class="icon">&#128100;</span> 계정 관리
+      </a></li>
+      <li><a href="/admin/user-fields" class="{% if 'user-fields' in request.url.path %}active{% endif %}">
+        <span class="icon">&#128196;</span> 추가 필드
+      </a></li>
+      <li><a href="/admin/templates" class="{% if '/admin/templates' in request.url.path %}active{% endif %}">
+        <span class="icon">&#128196;</span> 서식 관리
+      </a></li>
+      <li><a href="/admin/workspaces" class="{% if '/admin/workspaces' in request.url.path %}active{% endif %}">
+        <span class="icon">&#128202;</span> 워크스페이스 관리
+      </a></li>
+      <li class="menu-group">사용</li>
+      {% endif %}
+
+      <li><a href="/workspaces" class="{% if request.url.path == '/workspaces' %}active{% endif %}">
+        <span class="icon">&#128203;</span> 워크스페이스
+      </a></li>
+    </ul>
+  </nav>
+
+  <!-- 메인 -->
+  <div class="main-area">
+    <header class="topbar">
+      <button class="sidebar-toggle" onclick="document.getElementById('sidebar').classList.toggle('collapsed')">&#9776;</button>
+      <span class="topbar-title">{% block page_title %}{% endblock %}</span>
+      <div class="topbar-user">
+        <span class="username">{{ current_user.username }}</span>
+        <span class="role-badge role-{{ current_user.role|lower }}">{{ current_user.role }}</span>
+        <button class="btn btn-sm btn-ghost" onclick="logout()">로그아웃</button>
+      </div>
+    </header>
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<!-- Modal -->
+<div id="modal-overlay" class="modal-overlay hidden" onclick="closeModal(event)">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3 id="modal-title"></h3>
+      <button onclick="closeModal()" class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<script src="/static/js/common.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

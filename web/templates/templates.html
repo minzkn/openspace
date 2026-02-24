@@ -1,0 +1,41 @@
+{% extends "layout.html" %}
+{% block title %}서식 관리 - OpenSpace{% endblock %}
+{% block page_title %}서식 관리{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <div class="toolbar-right">
+    <label class="btn btn-secondary">
+      xlsx 업로드
+      <input type="file" accept=".xlsx" style="display:none" onchange="importTemplate(this)">
+    </label>
+    <button class="btn btn-primary" onclick="showCreateTemplateModal()">+ 새 서식</button>
+  </div>
+</div>
+
+<div id="templates-grid" class="card-grid">
+  <div class="loading">로딩 중...</div>
+</div>
+
+<template id="tmpl-form-tpl">
+  <form id="tmpl-form" onsubmit="submitTemplateForm(event)">
+    <input type="hidden" id="tmpl-id">
+    <div class="form-group">
+      <label>서식명 *</label>
+      <input type="text" id="f-tmpl-name" required>
+    </div>
+    <div class="form-group">
+      <label>설명</label>
+      <textarea id="f-tmpl-desc" rows="3"></textarea>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">취소</button>
+      <button type="submit" class="btn btn-primary">저장</button>
+    </div>
+  </form>
+</template>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/templates.js"></script>
+{% endblock %}

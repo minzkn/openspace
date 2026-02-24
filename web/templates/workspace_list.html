@@ -1,0 +1,20 @@
+{% extends "layout.html" %}
+{% block title %}워크스페이스 - OpenSpace{% endblock %}
+{% block page_title %}워크스페이스{% endblock %}
+
+{% block content %}
+<div class="card-grid">
+  {% for ws in workspaces %}
+  <a href="/workspaces/{{ ws.id }}" class="ws-card {% if ws.status == 'OPEN' %}open{% else %}closed{% endif %}">
+    <div class="ws-card-name">{{ ws.name }}</div>
+    <div class="ws-card-meta">
+      <span class="badge {{ ws.status|lower }}">{{ ws.status }}</span>
+      <span>{{ ws.sheets|length }}개 시트</span>
+    </div>
+    <div class="ws-card-date">{{ ws.created_at[:10] }}</div>
+  </a>
+  {% else %}
+  <div class="empty-msg">게시된 워크스페이스가 없습니다.</div>
+  {% endfor %}
+</div>
+{% endblock %}

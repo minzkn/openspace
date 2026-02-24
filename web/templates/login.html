@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>로그인 - OpenSpace</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="login-body">
+<div class="login-container">
+  <div class="login-card">
+    <h1 class="login-title">OpenSpace</h1>
+    <p class="login-subtitle">Excel 협업 플랫폼</p>
+    <form id="login-form" onsubmit="doLogin(event)">
+      <div class="form-group">
+        <label for="username">사용자명</label>
+        <input type="text" id="username" name="username" required autocomplete="username" placeholder="admin">
+      </div>
+      <div class="form-group">
+        <label for="password">비밀번호</label>
+        <input type="password" id="password" name="password" required autocomplete="current-password" placeholder="••••••••">
+      </div>
+      <div id="login-error" class="error-msg hidden"></div>
+      <button type="submit" class="btn btn-primary btn-block" id="login-btn">로그인</button>
+    </form>
+  </div>
+</div>
+<div id="toast-container"></div>
+<script src="/static/js/common.js"></script>
+<script>
+async function doLogin(e) {
+  e.preventDefault();
+  const btn = document.getElementById('login-btn');
+  const errEl = document.getElementById('login-error');
+  btn.disabled = true;
+  btn.textContent = '로그인 중...';
+  errEl.classList.add('hidden');
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        username: document.getElementById('username').value,
+        password: document.getElementById('password').value,
+      }),
+      credentials: 'same-origin',
+    });
+    if (res.ok) {
+      window.location.href = '/dashboard';
+    } else {
+      const data = await res.json();
+      errEl.textContent = data.detail || '로그인 실패';
+      errEl.classList.remove('hidden');
+    }
+  } catch(err) {
+    errEl.textContent = '서버 연결 오류';
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '로그인';
+  }
+}
+</script>
+</body>
+</html>

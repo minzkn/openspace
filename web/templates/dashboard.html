@@ -1,0 +1,141 @@
+{% extends "layout.html" %}
+{% block title %}대시보드 - OpenSpace{% endblock %}
+{% block page_title %}대시보드{% endblock %}
+
+{% block content %}
+
+{% if current_user.must_change_password %}
+<div class="alert alert-warning" id="pw-change-alert">
+  <strong>보안 경고:</strong> 초기 비밀번호를 사용 중입니다.
+  <a href="#" onclick="openPasswordModal(); document.getElementById('pw-change-alert').style.display='none'; return false;">지금 비밀번호를 변경하세요.</a>
+</div>
+{% endif %}
+
+<div class="stat-cards">
+  <div class="stat-card">
+    <div class="stat-value">{{ user_count }}</div>
+    <div class="stat-label">전체 사용자</div>
+  </div>
+  {% if is_admin %}
+  <div class="stat-card">
+    <div class="stat-value">{{ tmpl_count }}</div>
+    <div class="stat-label">서식 수</div>
+  </div>
+  {% endif %}
+  <div class="stat-card">
+    <div class="stat-value">{{ ws_count }}</div>
+    <div class="stat-label">워크스페이스</div>
+  </div>
+</div>
+
+<section class="section">
+  <h2>열린 워크스페이스</h2>
+  {% if open_workspaces %}
+  <div class="card-grid">
+    {% for ws in open_workspaces %}
+    <a href="/workspaces/{{ ws.id }}" class="ws-card open">
+      <div class="ws-card-name">{{ ws.name }}</div>
+      <div class="ws-card-meta">
+        <span class="badge open">OPEN</span>
+        <span>{{ ws.sheet_count }}개 시트</span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty-msg">열린 워크스페이스가 없습니다.</p>
+  {% endif %}
+</section>
+
+{% if is_admin and recent_logs %}
+<section class="section">
+  <h2>최근 변경 이력</h2>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>사용자</th>
+          <th>워크스페이스</th>
+          <th>셀</th>
+          <th>이전 값</th>
+          <th>변경 값</th>
+          <th>변경 시각</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in recent_logs %}
+        <tr>
+          <td>{{ log.username }}</td>
+          <td><a href="/workspaces/{{ log.workspace_id }}">{{ log.workspace_name }}</a></td>
+          <td class="mono">{{ log.cell }}</td>
+          <td class="text-muted">{{ log.old_value or '' }}</td>
+          <td>{{ log.new_value or '' }}</td>
+          <td class="text-muted small">{{ log.changed_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<!-- 비밀번호 변경 모달 -->
+<div id="pw-modal" class="modal" style="display:none">
+  <div class="modal-content" style="max-width:380px">
+    <div class="modal-header">
+      <h3>비밀번호 변경</h3>
+      <button class="close-btn" onclick="closePwModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>현재 비밀번호</label>
+        <input type="password" id="pw-current" class="form-input" placeholder="현재 비밀번호">
+      </div>
+      <div class="form-group">
+        <label>새 비밀번호 (8자 이상)</label>
+        <input type="password" id="pw-new" class="form-input" placeholder="새 비밀번호">
+      </div>
+      <div class="form-group">
+        <label>새 비밀번호 확인</label>
+        <input type="password" id="pw-confirm" class="form-input" placeholder="새 비밀번호 확인">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="submitPasswordChange()">변경</button>
+      <button class="btn btn-secondary" onclick="closePwModal()">취소</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function openPasswordModal() {
+  document.getElementById('pw-modal').style.display = 'flex';
+}
+function closePwModal() {
+  document.getElementById('pw-modal').style.display = 'none';
+  document.getElementById('pw-current').value = '';
+  document.getElementById('pw-new').value = '';
+  document.getElementById('pw-confirm').value = '';
+}
+async function submitPasswordChange() {
+  const current = document.getElementById('pw-current').value;
+  const nw = document.getElementById('pw-new').value;
+  const confirm = document.getElementById('pw-confirm').value;
+  if (!current || !nw) { showToast('모든 필드를 입력하세요.', 'error'); return; }
+  if (nw.length < 8) { showToast('새 비밀번호는 8자 이상이어야 합니다.', 'error'); return; }
+  if (nw !== confirm) { showToast('새 비밀번호가 일치하지 않습니다.', 'error'); return; }
+  const res = await apiFetch('/api/auth/me/password', {
+    method: 'PATCH',
+    body: JSON.stringify({ current_password: current, new_password: nw }),
+  });
+  if (res.ok) {
+    showToast('비밀번호가 변경되었습니다.', 'success');
+    closePwModal();
+    document.getElementById('pw-change-alert') && (document.getElementById('pw-change-alert').style.display = 'none');
+  } else {
+    const d = await res.json();
+    showToast(d.detail || '변경 실패', 'error');
+  }
+}
+</script>
+{% endblock %}

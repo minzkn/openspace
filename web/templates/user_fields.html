@@ -1,0 +1,67 @@
+{% extends "layout.html" %}
+{% block title %}추가 필드 관리 - OpenSpace{% endblock %}
+{% block page_title %}추가 필드 관리{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <div class="toolbar-right">
+    <button class="btn btn-primary" onclick="showCreateFieldModal()">+ 필드 추가</button>
+  </div>
+</div>
+
+<div class="table-container">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>순서</th>
+        <th>필드명</th>
+        <th>레이블</th>
+        <th>타입</th>
+        <th>민감정보</th>
+        <th>필수</th>
+        <th>작업</th>
+      </tr>
+    </thead>
+    <tbody id="fields-tbody">
+      <tr><td colspan="7" class="loading">로딩 중...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<template id="field-form-tpl">
+  <form id="field-form" onsubmit="submitFieldForm(event)">
+    <input type="hidden" id="field-id">
+    <div class="form-group">
+      <label>필드명 (snake_case) *</label>
+      <input type="text" id="f-field-name" required pattern="[a-z_][a-z0-9_]*" placeholder="phone_number">
+    </div>
+    <div class="form-group">
+      <label>레이블 *</label>
+      <input type="text" id="f-label" required placeholder="전화번호">
+    </div>
+    <div class="form-group">
+      <label>타입</label>
+      <select id="f-field-type">
+        <option value="text">텍스트</option>
+        <option value="number">숫자</option>
+        <option value="date">날짜</option>
+        <option value="boolean">불리언</option>
+      </select>
+    </div>
+    <div class="form-group checkbox-group">
+      <label><input type="checkbox" id="f-is-sensitive"> 민감 정보 (암호화 저장)</label>
+    </div>
+    <div class="form-group checkbox-group">
+      <label><input type="checkbox" id="f-is-required"> 필수 입력</label>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">취소</button>
+      <button type="submit" class="btn btn-primary">저장</button>
+    </div>
+  </form>
+</template>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/user_fields.js"></script>
+{% endblock %}

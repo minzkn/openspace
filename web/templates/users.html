@@ -1,0 +1,81 @@
+{% extends "layout.html" %}
+{% block title %}계정 관리 - OpenSpace{% endblock %}
+{% block page_title %}계정 관리{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <div class="toolbar-left">
+    <input type="text" id="search-input" placeholder="사용자명 검색..." class="search-input" oninput="debounce(loadUsers, 300)()">
+  </div>
+  <div class="toolbar-right">
+    <button class="btn btn-secondary" onclick="exportUsers()">Excel 다운로드</button>
+    <label class="btn btn-secondary">
+      Excel 업로드
+      <input type="file" accept=".xlsx" style="display:none" onchange="importUsers(this)">
+    </label>
+    <button class="btn btn-primary" onclick="showCreateUserModal()">+ 사용자 추가</button>
+  </div>
+</div>
+
+<div class="table-container">
+  <table class="data-table" id="users-table">
+    <thead>
+      <tr>
+        <th>사용자명</th>
+        <th>이메일</th>
+        <th>역할</th>
+        <th>상태</th>
+        <th>생성일</th>
+        <th>작업</th>
+      </tr>
+    </thead>
+    <tbody id="users-tbody">
+      <tr><td colspan="6" class="loading">로딩 중...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="pagination" id="pagination"></div>
+
+<!-- Create/Edit User Modal -->
+<template id="user-form-tpl">
+  <form id="user-form" onsubmit="submitUserForm(event)">
+    <input type="hidden" id="user-id">
+    <div class="form-group">
+      <label>사용자명 *</label>
+      <input type="text" id="f-username" required>
+    </div>
+    <div class="form-group">
+      <label>비밀번호 <span id="pw-hint">(8자 이상)</span></label>
+      <input type="password" id="f-password" minlength="8">
+    </div>
+    <div class="form-group">
+      <label>이메일</label>
+      <input type="email" id="f-email">
+    </div>
+    <div class="form-group">
+      <label>역할 *</label>
+      <select id="f-role">
+        <option value="USER">USER</option>
+        <option value="ADMIN">ADMIN</option>
+        <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>활성 상태</label>
+      <select id="f-is-active">
+        <option value="1">활성</option>
+        <option value="0">비활성</option>
+      </select>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">취소</button>
+      <button type="submit" class="btn btn-primary" id="user-submit-btn">저장</button>
+    </div>
+  </form>
+</template>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/users.js"></script>
+{% endblock %}

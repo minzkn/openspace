@@ -263,12 +263,36 @@ async def update_ws_sheet_merges(
     return {"message": "merges saved", "count": len(body.merges)}
 
 
+class RowHeightsUpdate(BaseModel):
+    row_heights: Optional[dict] = None  # e.g. {"0": 30, "5": 50} (row_index_str → pt)
+
+
 class FreezeUpdate(BaseModel):
     freeze_panes: Optional[str] = None  # e.g. "C1" or null
 
 
 class ConditionalFormatsUpdate(BaseModel):
     conditional_formats: Optional[str] = None  # JSON string of rules array
+
+
+@admin_router.patch("/{workspace_id}/sheets/{sheet_id}/row-heights")
+async def update_ws_sheet_row_heights(
+    workspace_id: str,
+    sheet_id: str,
+    body: RowHeightsUpdate,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    """워크스페이스 시트 행 높이 저장"""
+    ws_sheet = db.query(WorkspaceSheet).filter(
+        WorkspaceSheet.id == sheet_id,
+        WorkspaceSheet.workspace_id == workspace_id,
+    ).first()
+    if not ws_sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    ws_sheet.row_heights = json.dumps(body.row_heights) if body.row_heights else None
+    db.commit()
+    return {"message": "row_heights saved"}
 
 
 @admin_router.patch("/{workspace_id}/sheets/{sheet_id}/freeze")

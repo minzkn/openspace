@@ -602,6 +602,30 @@ async def update_sheet_merges(
     return {"message": "merges saved", "count": len(body.merges)}
 
 
+class RowHeightsUpdate(BaseModel):
+    row_heights: Optional[dict] = None  # e.g. {"0": 30, "5": 50} (row_index_str → pt)
+
+
+@router.patch("/{template_id}/sheets/{sheet_id}/row-heights")
+async def update_sheet_row_heights(
+    template_id: str,
+    sheet_id: str,
+    body: RowHeightsUpdate,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    """서식 시트 행 높이 저장"""
+    sheet = db.query(TemplateSheet).filter(
+        TemplateSheet.id == sheet_id,
+        TemplateSheet.template_id == template_id,
+    ).first()
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    sheet.row_heights = json.dumps(body.row_heights) if body.row_heights else None
+    db.commit()
+    return {"message": "row_heights saved"}
+
+
 class FreezeUpdate(BaseModel):
     freeze_panes: Optional[str] = None
 

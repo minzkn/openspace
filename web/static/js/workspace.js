@@ -264,6 +264,7 @@ async function loadSheet(index) {
     onbeforechange: handleBeforeChange,
     onselection: handleSelection,
     onmerge: IS_ADMIN ? handleMerge : undefined,
+    onresizerow: IS_ADMIN ? handleResizeRow : undefined,
     contextMenu: SpreadsheetCore.buildContextMenu(ctx),
     updateTable: function(instance, cell, col, row, val, label, cellName) {
       // cellName이 없는 경우 직접 계산 (jspreadsheet 버전 호환)
@@ -811,6 +812,40 @@ async function saveMerges() {
   await apiFetch(
     `/api/admin/workspaces/${workspaceData.id}/sheets/${sheet.id}/merges`,
     { method: 'PATCH', body: JSON.stringify({ merges: mergesList }) }
+  );
+}
+
+// ── 행 높이 변경 핸들러 ─────────────────────────────────────
+let rowHeightSaveTimer = null;
+function handleResizeRow(el, row, height) {
+  // 디바운스: 연속 리사이즈 시 마지막 변경만 저장
+  clearTimeout(rowHeightSaveTimer);
+  rowHeightSaveTimer = setTimeout(saveRowHeights, 500);
+}
+
+async function saveRowHeights() {
+  if (!spreadsheet || !IS_ADMIN) return;
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  const rowHeights = {};
+  // jspreadsheet CE v4: getHeight(row) 또는 rows 배열에서 높이 추출
+  try {
+    const rows = spreadsheet.rows;
+    if (rows) {
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i] && rows[i].style && rows[i].style.height) {
+          const px = parseFloat(rows[i].style.height);
+          if (px && px !== 0) {
+            // px → pt 변환 (Excel 행 높이는 pt 단위)
+            rowHeights[String(i)] = Math.round(px / 1.333 * 10) / 10;
+          }
+        }
+      }
+    }
+  } catch(e) {}
+  await apiFetch(
+    `/api/admin/workspaces/${workspaceData.id}/sheets/${sheet.id}/row-heights`,
+    { method: 'PATCH', body: JSON.stringify({ row_heights: rowHeights }) }
   );
 }
 

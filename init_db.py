@@ -50,7 +50,14 @@ def apply_incremental_migrations(conn):
         script = path.read_text(encoding="utf-8")
         for stmt in script.split(";"):
             stmt = stmt.strip()
-            if not stmt or stmt.startswith("--"):
+            if not stmt:
+                continue
+            # 주석 줄 제거 후 실제 SQL이 있는지 확인 (주석으로 시작하는 청크도 실행)
+            non_comment = "\n".join(
+                line for line in stmt.splitlines()
+                if not line.strip().startswith("--")
+            ).strip()
+            if not non_comment:
                 continue
             try:
                 conn.execute(stmt)

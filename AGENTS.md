@@ -66,7 +66,7 @@
 | **ORM** | SQLAlchemy 2.0 (Core + ORM) | Python 표준급 ORM, SQLite WAL 모드 지원 |
 | **DB** | SQLite 3 (WAL 모드) | 단일 파일, 설치 불필요, WAL로 동시 읽기 성능 향상 |
 | **템플릿** | Jinja2 (서버 사이드) | FastAPI 내장 지원, SSR로 초기 로드 속도 우수 |
-| **스프레드시트 UI** | Jspreadsheet CE (CDN) | MIT 라이선스, 10000행·64시트 지원, Excel-like UX |
+| **스프레드시트 UI** | Jspreadsheet CE (로컬 번들) | MIT 라이선스, 10000행·64시트 지원, Excel-like UX, 폐쇄망 대응 |
 | **Excel I/O** | openpyxl | MIT 라이선스, xlsx 읽기/쓰기, 서식 보존 |
 | **비밀번호 해시** | argon2-cffi | OWASP 권장 Argon2id 알고리즘 |
 | **암호화** | cryptography (AES-256-GCM) | PyCA 공식 라이브러리, 인증 암호화 |
@@ -92,7 +92,7 @@
 ```
 ┌─────────────────────────────────────────────────────┐
 │                    브라우저 클라이언트                  │
-│  HTML5 + Jspreadsheet CE(CDN) + Vanilla JS           │
+│  HTML5 + Jspreadsheet CE(로컬 번들) + Vanilla JS       │
 │  - HTTP REST  ─────────────────────────────┐         │
 │  - WebSocket  ──────────────────────────┐  │         │
 └────────────────────────────────────────┼──┼─────────┘
@@ -458,7 +458,7 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
 X-XSS-Protection: 1; mode=block
 Strict-Transport-Security: max-age=31536000
-Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; ...
+Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; ...
 Referrer-Policy: strict-origin-when-cross-origin
 ```
 
@@ -920,6 +920,12 @@ openspace/
 │   └── static/
 │       ├── css/
 │       │   └── style.css
+│       ├── lib/                     # 프론트엔드 로컬 번들 (폐쇄망 대응)
+│       │   ├── jsuites.css
+│       │   ├── jsuites.js
+│       │   ├── jspreadsheet.css
+│       │   ├── jspreadsheet.js      # Jspreadsheet CE v4
+│       │   └── jspreadsheet-formula.js  # @jspreadsheet/formula v2
 │       └── js/
 │           ├── common.js
 │           ├── workspace.js
@@ -961,19 +967,32 @@ aiofiles>=23.2.0
 
 > **의도적 제외**: Redis, Celery, Node.js, JWT 라이브러리, 외부 인증 서비스
 
-### 12.2 CDN 의존성 (인터넷 필요)
+### 12.2 프론트엔드 로컬 번들 (폐쇄망 대응)
 
-```html
-<!-- Jspreadsheet CE -->
-<script src="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/index.js"></script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.css">
+모든 프론트엔드 라이브러리는 `web/static/lib/`에 로컬 번들링되어 있어 **외부 인터넷 연결이 불필요**합니다.
 
-<!-- Jsuites (Jspreadsheet 의존성) -->
-<script src="https://cdn.jsdelivr.net/npm/jsuites/dist/jsuites.js"></script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsuites/dist/jsuites.css">
+```
+web/static/lib/
+├── jsuites.css              # jSuites UI 컴포넌트 스타일
+├── jsuites.js               # jSuites UI 컴포넌트
+├── jspreadsheet.css         # Jspreadsheet CE 스타일
+├── jspreadsheet.js          # Jspreadsheet CE v4 엔진
+└── jspreadsheet-formula.js  # @jspreadsheet/formula v2 수식 엔진
 ```
 
-> 인터넷 차단 환경: CDN 파일을 `web/static/vendor/`에 복사하고 경로 수정
+HTML 참조 (workspace.html, template_edit.html):
+```html
+<link rel="stylesheet" href="/static/lib/jsuites.css">
+<link rel="stylesheet" href="/static/lib/jspreadsheet.css">
+<script src="/static/lib/jsuites.js"></script>
+<script src="/static/lib/jspreadsheet.js"></script>
+<script src="/static/lib/jspreadsheet-formula.js"></script>
+```
+
+> 원본 CDN URL (업데이트 필요 시 참고):
+> - `https://cdn.jsdelivr.net/npm/jsuites/dist/jsuites.{css,js}`
+> - `https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/{jspreadsheet.css,index.js}`
+> - `https://cdn.jsdelivr.net/npm/@jspreadsheet/formula@2/dist/index.js`
 
 ### 12.3 start.sh
 
@@ -1128,12 +1147,14 @@ settings = Settings()
 | DB 쓰기 경쟁 | 배치 저장 + SQLite WAL (쓰기 직렬화, 읽기 비차단) |
 | 메모리 | Jspreadsheet lazyLoading, 서버 스냅샷 청크 전송 옵션 |
 
-### 15.2 설치 의존성 최소화
+### 15.2 설치 의존성 최소화 및 폐쇄망 대응
 
 - Python 표준 라이브러리 최대 활용
 - pip 패키지 10개 이내
 - 추가 서비스(Redis, DB 서버 등) 불필요
-- CDN 사용으로 프론트엔드 빌드 불필요
+- 프론트엔드 빌드 불필요 (로컬 번들 파일 직접 서빙)
+- **외부 인터넷 연결 불필요** — 모든 JS/CSS 라이브러리가 `web/static/lib/`에 포함
+- CSP 헤더에 외부 도메인 없음 — 폐쇄망 환경에서 완전 동작
 
 ### 15.3 보안 체크리스트
 
@@ -1273,6 +1294,7 @@ function connectWebSocket(workspaceId) {
 | 동시 셀 충돌 | Last-Write-Wins, 락 없음 |
 | 모바일 지원 | Jspreadsheet는 데스크톱 최적화, 모바일은 제한적 |
 | 오프라인 편집 | 미지원 (WebSocket 단절 시 reconnect 로직만) |
+| 라이브러리 업데이트 | `web/static/lib/` 파일을 CDN에서 재다운로드하여 교체 필요 |
 
 ---
 

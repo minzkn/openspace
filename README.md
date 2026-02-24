@@ -122,6 +122,12 @@ openspace/
 │   ├── templates/         # Jinja2 HTML 페이지
 │   └── static/
 │       ├── css/style.css
+│       ├── lib/                         # 프론트엔드 로컬 번들 (폐쇄망 대응)
+│       │   ├── jsuites.css
+│       │   ├── jsuites.js
+│       │   ├── jspreadsheet.css
+│       │   ├── jspreadsheet.js          # Jspreadsheet CE v4
+│       │   └── jspreadsheet-formula.js  # @jspreadsheet/formula v2
 │       └── js/
 │           ├── common.js
 │           ├── template_edit.js   # Template 편집 + 포맷 툴바
@@ -154,7 +160,7 @@ openspace/
 | **ORM** | SQLAlchemy 2.0 |
 | **DB** | SQLite 3 (WAL 모드) |
 | **템플릿** | Jinja2 (서버 사이드 렌더링) |
-| **스프레드시트 UI** | Jspreadsheet CE (CDN, MIT) |
+| **스프레드시트 UI** | Jspreadsheet CE (로컬 번들, MIT) |
 | **Excel I/O** | openpyxl |
 | **비밀번호 해시** | argon2-cffi (Argon2id) |
 | **암호화** | cryptography (AES-256-GCM) |
@@ -269,7 +275,7 @@ DB: xlsx 범위 문자열 목록
 | 세션 | HttpOnly + SameSite=Lax 쿠키, UUID 세션 ID, DB 저장 |
 | CSRF | Double Submit Cookie (X-CSRF-Token 헤더) |
 | 필드 암호화 | AES-256-GCM (KEK 기반 per-value 키 파생) |
-| XSS | Content-Security-Policy 헤더, Jinja2 자동 이스케이프 |
+| XSS | Content-Security-Policy 헤더 (외부 도메인 없음), Jinja2 자동 이스케이프 |
 | 클릭재킹 | X-Frame-Options: DENY |
 | RBAC | 서버에서 강제 적용, 클라이언트 값 신뢰 안 함 |
 | ADMIN 제한 | ADMIN은 SUPER_ADMIN 계정을 관리할 수 없음 |
@@ -283,6 +289,7 @@ DB: xlsx 범위 문자열 목록
 3. **HTTPS 필수 (프로덕션)** — `DEBUG=false` 설정 시 쿠키에 `Secure` 플래그가 추가됩니다. Nginx 등 리버스 프록시로 TLS를 제공해야 합니다.
 4. **`.env` git 제외** — `.gitignore`에 `.env`를 추가하세요.
 5. **DB 백업** — `openspace.db` 파일을 정기 백업하세요.
+6. **폐쇄망(오프라인) 완전 지원** — 모든 프론트엔드 라이브러리가 `web/static/lib/`에 로컬 번들링되어 있어 외부 인터넷 연결이 필요 없습니다. CDN 의존성이 없으므로 폐쇄망 환경에서도 즉시 사용 가능합니다.
 
 ### Nginx 리버스 프록시 예시
 

@@ -20,13 +20,15 @@ OpenSpace는 다음 오픈소스 소프트웨어에 의존합니다.
 | Jinja2 | BSD-3-Clause | https://github.com/pallets/jinja |
 | aiofiles | Apache-2.0 | https://github.com/Tinche/aiofiles |
 
-## 프론트엔드 라이브러리 (CDN)
+## 프론트엔드 라이브러리 (로컬 번들: `web/static/lib/`)
 
-| 라이브러리 | 버전 | 라이선스 | 프로젝트 URL |
-|-----------|------|---------|-------------|
-| Jspreadsheet CE | v4 | MIT | https://github.com/jspreadsheet/ce |
-| jSuites | latest | MIT | https://github.com/jsuites/jsuites |
-| @jspreadsheet/formula | v2 | MIT | https://github.com/jspreadsheet/formula |
+모든 프론트엔드 라이브러리는 CDN이 아닌 로컬 번들로 포함되어 있어 폐쇄망에서도 동작합니다.
+
+| 라이브러리 | 버전 | 로컬 파일 | 라이선스 | 프로젝트 URL |
+|-----------|------|----------|---------|-------------|
+| Jspreadsheet CE | v4 | `jspreadsheet.css`, `jspreadsheet.js` | MIT | https://github.com/jspreadsheet/ce |
+| jSuites | latest | `jsuites.css`, `jsuites.js` | MIT | https://github.com/jsuites/jsuites |
+| @jspreadsheet/formula | v2 | `jspreadsheet-formula.js` | MIT | https://github.com/jspreadsheet/formula |
 
 ---
 

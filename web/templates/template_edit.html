@@ -3,8 +3,8 @@
 {% block page_title %}서식 편집: {{ template.name }}{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsuites/dist/jsuites.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.css">
+<link rel="stylesheet" href="/static/lib/jsuites.css">
+<link rel="stylesheet" href="/static/lib/jspreadsheet.css">
 <style>
 .editor-topbar { display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
 .editor-topbar .left { flex:1; display:flex; align-items:center; gap:8px; }
@@ -208,9 +208,9 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/jsuites/dist/jsuites.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/index.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@jspreadsheet/formula@2/dist/index.js"></script>
+<script src="/static/lib/jsuites.js"></script>
+<script src="/static/lib/jspreadsheet.js"></script>
+<script src="/static/lib/jspreadsheet-formula.js"></script>
 <script src="/static/js/spreadsheet_core.js"></script>
 <script src="/static/js/template_edit.js"></script>
 {% endblock %}

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 JAEHYUK CHO
 import uuid
 import json
 from typing import Optional
@@ -144,13 +146,28 @@ async def get_snapshot(
     # 컬럼 메타
     tmpl_sheet = db.query(TemplateSheet).filter(TemplateSheet.id == ws_sheet.template_sheet_id).first()
     num_cols = len(tmpl_sheet.columns) if tmpl_sheet else 0
+    # template_sheet_id=None인 경우 셀 데이터 + 병합 데이터에서 컬럼 수 추론
+    if num_cols == 0:
+        if cells:
+            num_cols = max((c.col_index for c in cells), default=-1) + 1
+        # 병합 데이터에서도 최대 컬럼 추론
+        if ws_sheet.merges:
+            try:
+                from openpyxl.utils import range_boundaries
+                for rng in json.loads(ws_sheet.merges):
+                    _, _, max_col, _ = range_boundaries(rng)
+                    num_cols = max(num_cols, max_col)
+            except Exception:
+                pass
+        num_cols = max(num_cols, 5)  # 최소 5열
     max_row = max((c.row_index for c in cells), default=-1) + 1
     num_rows = max(max_row, 100)
 
-    # 2D 배열 + 스타일 맵 + 메모 맵
+    # 2D 배열 + 스타일 맵 + 메모 맵 + 숫자 서식 맵
     grid = [[""] * num_cols for _ in range(num_rows)]
     styles: dict = {}
     comments: dict = {}
+    num_formats: dict = {}
     for c in cells:
         if c.row_index < num_rows and c.col_index < num_cols:
             grid[c.row_index][c.col_index] = c.value or ""
@@ -160,6 +177,8 @@ async def get_snapshot(
                     if s:
                         cell_name = f"{get_column_letter(c.col_index + 1)}{c.row_index + 1}"
                         styles[cell_name] = _style_to_css(s)
+                        if s.get('numFmt'):
+                            num_formats[cell_name] = s['numFmt']
                 except Exception:
                     pass
             if c.comment:
@@ -208,6 +227,7 @@ async def get_snapshot(
             "freeze_columns": freeze_columns,
             "styles": styles,
             "comments": comments,
+            "num_formats": num_formats,
             "conditional_formats": conditional_formats,
         }
     }
@@ -274,13 +294,20 @@ async def insert_rows(
     count = max(1, min(body.count, 100))  # limit to 100 rows at a time
 
     # Shift existing cells down
-    cells_to_shift = db.query(WorkspaceCell).filter(
-        WorkspaceCell.sheet_id == sheet_id,
-        WorkspaceCell.row_index >= insert_at,
-    ).order_by(WorkspaceCell.row_index.desc()).all()
-
-    for cell in cells_to_shift:
-        cell.row_index += count
+    # Use negative offset first to avoid UNIQUE constraint conflicts,
+    # then shift to final position
+    db.execute(
+        WorkspaceCell.__table__.update()
+        .where(WorkspaceCell.sheet_id == sheet_id)
+        .where(WorkspaceCell.row_index >= insert_at)
+        .values(row_index=WorkspaceCell.row_index - 100000)
+    )
+    db.execute(
+        WorkspaceCell.__table__.update()
+        .where(WorkspaceCell.sheet_id == sheet_id)
+        .where(WorkspaceCell.row_index < -90000)
+        .values(row_index=WorkspaceCell.row_index + 100000 + count)
+    )
 
     # Update merges JSON
     if ws_sheet.merges:
@@ -353,30 +380,25 @@ async def delete_rows(
             WorkspaceCell.row_index == ri,
         ).delete()
 
-    # Shift cells above deleted rows down
-    # Process from bottom to top to avoid conflicts
-    for i, ri in enumerate(indices):
-        shift = i + 1  # How many rows deleted so far (including this one)
-        next_ri = indices[i + 1] if i + 1 < len(indices) else MAX_ROWS
-        # Cells between ri+1 and next_ri-1 need to shift up by 'shift'
-        cells_to_shift = db.query(WorkspaceCell).filter(
-            WorkspaceCell.sheet_id == sheet_id,
-            WorkspaceCell.row_index > ri,
-            WorkspaceCell.row_index < next_ri,
-        ).all()
-        for cell in cells_to_shift:
-            cell.row_index -= shift
-
-    # Handle remaining cells after the last deleted index
-    if indices:
-        last_idx = indices[-1]
-        total_deleted = len(indices)
-        remaining = db.query(WorkspaceCell).filter(
-            WorkspaceCell.sheet_id == sheet_id,
-            WorkspaceCell.row_index > last_idx,
-        ).all()
-        for cell in remaining:
-            cell.row_index -= total_deleted
+    # Shift remaining cells up using raw SQL (two-step to avoid UNIQUE conflicts)
+    # Step 1: move all cells above first deleted row to negative space
+    first_deleted = indices[0]
+    db.execute(
+        WorkspaceCell.__table__.update()
+        .where(WorkspaceCell.sheet_id == sheet_id)
+        .where(WorkspaceCell.row_index > first_deleted)
+        .values(row_index=WorkspaceCell.row_index - 100000)
+    )
+    # Step 2: compute correct new positions and move back
+    # Each cell's new row = old_row - (number of deleted rows below it)
+    from sqlalchemy import text
+    for cell in db.query(WorkspaceCell).filter(
+        WorkspaceCell.sheet_id == sheet_id,
+        WorkspaceCell.row_index < -90000,
+    ).all():
+        original_row = cell.row_index + 100000
+        offset = sum(1 for d in indices if d < original_row)
+        cell.row_index = original_row - offset
 
     # Update merges JSON
     if ws_sheet.merges:
@@ -414,6 +436,183 @@ async def delete_rows(
     }, exclude=None))
 
     return {"message": "rows deleted", "count": len(indices)}
+
+
+# ── Column insert / delete ────────────────────────────────────
+
+class ColInsertRequest(BaseModel):
+    col_index: int
+    count: int = 1
+    direction: str = "before"  # "before" or "after"
+
+
+class ColDeleteRequest(BaseModel):
+    col_indices: list[int]
+
+
+@router.post("/{workspace_id}/sheets/{sheet_id}/cols/insert")
+async def insert_cols(
+    workspace_id: str,
+    sheet_id: str,
+    body: ColInsertRequest,
+    current_user: User = Depends(require_user),
+    db: DBSession = Depends(get_db),
+):
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if ws.status == "CLOSED" and not is_admin_or_above(current_user):
+        raise HTTPException(status_code=403, detail="Workspace is closed")
+
+    ws_sheet = db.query(WorkspaceSheet).filter(
+        WorkspaceSheet.id == sheet_id,
+        WorkspaceSheet.workspace_id == workspace_id,
+    ).first()
+    if not ws_sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+
+    insert_at = body.col_index if body.direction == "before" else body.col_index + 1
+    count = max(1, min(body.count, 50))
+
+    # Shift existing cells right using two-step negative offset
+    db.execute(
+        WorkspaceCell.__table__.update()
+        .where(WorkspaceCell.sheet_id == sheet_id)
+        .where(WorkspaceCell.col_index >= insert_at)
+        .values(col_index=WorkspaceCell.col_index - 100000)
+    )
+    db.execute(
+        WorkspaceCell.__table__.update()
+        .where(WorkspaceCell.sheet_id == sheet_id)
+        .where(WorkspaceCell.col_index < -90000)
+        .values(col_index=WorkspaceCell.col_index + 100000 + count)
+    )
+
+    # Update merges JSON
+    if ws_sheet.merges:
+        try:
+            merges = json.loads(ws_sheet.merges)
+            updated = _shift_merges_col(merges, insert_at, count)
+            ws_sheet.merges = json.dumps(updated)
+        except Exception:
+            pass
+
+    db.commit()
+
+    import asyncio
+    asyncio.create_task(hub.broadcast(workspace_id, {
+        "type": "col_insert",
+        "sheet_id": sheet_id,
+        "col_index": insert_at,
+        "count": count,
+        "updated_by": current_user.username,
+    }, exclude=None))
+
+    return {"message": "columns inserted", "col_index": insert_at, "count": count}
+
+
+@router.post("/{workspace_id}/sheets/{sheet_id}/cols/delete")
+async def delete_cols(
+    workspace_id: str,
+    sheet_id: str,
+    body: ColDeleteRequest,
+    current_user: User = Depends(require_user),
+    db: DBSession = Depends(get_db),
+):
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if ws.status == "CLOSED" and not is_admin_or_above(current_user):
+        raise HTTPException(status_code=403, detail="Workspace is closed")
+
+    ws_sheet = db.query(WorkspaceSheet).filter(
+        WorkspaceSheet.id == sheet_id,
+        WorkspaceSheet.workspace_id == workspace_id,
+    ).first()
+    if not ws_sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+
+    indices = sorted(set(body.col_indices))
+    if not indices:
+        return {"message": "no columns to delete"}
+
+    # Delete cells in target columns
+    for ci in indices:
+        db.query(WorkspaceCell).filter(
+            WorkspaceCell.sheet_id == sheet_id,
+            WorkspaceCell.col_index == ci,
+        ).delete()
+
+    # Shift remaining cells left using two-step negative offset
+    first_deleted = indices[0]
+    db.execute(
+        WorkspaceCell.__table__.update()
+        .where(WorkspaceCell.sheet_id == sheet_id)
+        .where(WorkspaceCell.col_index > first_deleted)
+        .values(col_index=WorkspaceCell.col_index - 100000)
+    )
+    for cell in db.query(WorkspaceCell).filter(
+        WorkspaceCell.sheet_id == sheet_id,
+        WorkspaceCell.col_index < -90000,
+    ).all():
+        original_col = cell.col_index + 100000
+        offset = sum(1 for d in indices if d < original_col)
+        cell.col_index = original_col - offset
+
+    # Update merges JSON
+    if ws_sheet.merges:
+        try:
+            merges = json.loads(ws_sheet.merges)
+            for ci in reversed(indices):
+                merges = _shift_merges_col(merges, ci, -1)
+            ws_sheet.merges = json.dumps(merges)
+        except Exception:
+            pass
+
+    db.commit()
+
+    import asyncio
+    asyncio.create_task(hub.broadcast(workspace_id, {
+        "type": "col_delete",
+        "sheet_id": sheet_id,
+        "col_indices": indices,
+        "updated_by": current_user.username,
+    }, exclude=None))
+
+    return {"message": "columns deleted", "count": len(indices)}
+
+
+def _shift_merges_col(merges: list[str], at_col: int, shift: int) -> list[str]:
+    """Shift merge ranges when columns are inserted/deleted."""
+    from openpyxl.utils import range_boundaries
+    updated = []
+    for rng in merges:
+        try:
+            min_col, min_row, max_col, max_row = range_boundaries(rng)
+            if shift > 0:
+                # Insert: at_col is 0-based, range_boundaries returns 1-based
+                at_col_1 = at_col + 1
+                if min_col >= at_col_1:
+                    min_col += shift
+                if max_col >= at_col_1:
+                    max_col += shift
+            else:
+                # Delete: at_col is 0-based, range_boundaries returns 1-based
+                deleted_col_1 = at_col + 1
+                if min_col <= deleted_col_1 <= max_col:
+                    if max_col - min_col == 0:
+                        continue  # entire merge deleted
+                    max_col -= 1
+                elif deleted_col_1 < min_col:
+                    min_col -= 1
+                    max_col -= 1
+            start = f"{get_column_letter(min_col)}{min_row}"
+            end = f"{get_column_letter(max_col)}{max_row}"
+            if start != end:
+                updated.append(f"{start}:{end}")
+        except Exception:
+            updated.append(rng)
+    return updated
 
 
 def _shift_merges(merges: list[str], at_row: int, shift: int) -> list[str]:

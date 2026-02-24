@@ -1,8 +1,11 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 JAEHYUK CHO
 import io
 import json
 import re
 import uuid
 from typing import Optional
+from urllib.parse import quote as url_quote
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -185,7 +188,11 @@ def _apply_cell_style(ws_cell, style_json: Optional[str]) -> None:
     if style.get('align'):
         align_kwargs['horizontal'] = style['align']
     if style.get('valign'):
-        align_kwargs['vertical'] = style['valign']
+        # CSS 'middle' → Excel 'center' 변환
+        va = style['valign']
+        if va == 'middle':
+            va = 'center'
+        align_kwargs['vertical'] = va
     if style.get('wrap'):
         align_kwargs['wrap_text'] = True
     if align_kwargs:
@@ -227,7 +234,11 @@ def _style_to_css(style: dict) -> str:
     if style.get('align'):
         parts.append(f"text-align:{style['align']}")
     if style.get('valign'):
-        parts.append(f"vertical-align:{style['valign']}")
+        # Excel 'center' → CSS 'middle' 변환
+        va = style['valign']
+        if va == 'center':
+            va = 'middle'
+        parts.append(f"vertical-align:{va}")
     if style.get('wrap'):
         parts.append('white-space:pre-wrap')
     if style.get('border'):
@@ -241,6 +252,8 @@ def _style_to_css(style: dict) -> str:
             w = width_map.get(bs, '1px')
             s = style_map.get(bs, 'solid')
             parts.append(f"border-{side}:{w} {s} #{color}")
+    if style.get('numFmt'):
+        parts.append(f"--num-fmt:{url_quote(style['numFmt'], safe='')}")
     return ';'.join(parts)
 
 
@@ -451,6 +464,7 @@ async def get_template_sheet_snapshot(
 
     grid = [[""] * num_cols for _ in range(num_rows)]
     styles: dict = {}
+    num_formats: dict = {}
     for c in cells:
         if c.row_index < num_rows and c.col_index < num_cols:
             val = c.formula if c.formula else (c.value or "")
@@ -461,6 +475,8 @@ async def get_template_sheet_snapshot(
                     if s:
                         cell_name = f"{get_column_letter(c.col_index + 1)}{c.row_index + 1}"
                         styles[cell_name] = _style_to_css(s)
+                        if s.get('numFmt'):
+                            num_formats[cell_name] = s['numFmt']
                 except Exception:
                     pass
 
@@ -513,6 +529,7 @@ async def get_template_sheet_snapshot(
             "freeze_columns": freeze_columns,
             "styles": styles,
             "comments": comments,
+            "num_formats": num_formats,
             "conditional_formats": conditional_formats,
         }
     }
@@ -990,8 +1007,10 @@ async def export_template_xlsx(
     wb.save(buf)
     buf.seek(0)
     safe_name = t.name.replace(" ", "_")[:50]
+    from urllib.parse import quote
+    encoded_name = quote(safe_name + ".xlsx")
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={safe_name}.xlsx"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"},
     )

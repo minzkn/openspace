@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 JAEHYUK CHO
 /* ============================================================
    spreadsheet_core.js — 공유 스프레드시트 모듈
    workspace.js 와 template_edit.js 에서 공통으로 사용하는
@@ -81,46 +83,89 @@ function closeAllDropdowns() {
   document.querySelectorAll('.fmt-dropdown.open').forEach(d => d.classList.remove('open'));
 }
 
+// ── CSS 색상 파싱 유틸리티 ───────────────────────────────────
+// 브라우저는 CSS 색상을 rgb() 형식으로 정규화하므로 #hex와 rgb() 모두 처리
+function _cssColorToHex(v) {
+  if (!v) return null;
+  v = v.trim();
+  if (v.startsWith('#')) {
+    var hex = v.substring(1).toUpperCase();
+    if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+    return hex;
+  }
+  var m = v.match(/^rgb[a]?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if (m) {
+    return ('0'+parseInt(m[1]).toString(16)).slice(-2).toUpperCase() +
+           ('0'+parseInt(m[2]).toString(16)).slice(-2).toUpperCase() +
+           ('0'+parseInt(m[3]).toString(16)).slice(-2).toUpperCase();
+  }
+  // 색상 이름 → transparent, inherit 등은 null
+  if (v === 'transparent' || v === 'inherit' || v === 'initial') return null;
+  return null;
+}
+
 // ── CSS ↔ Style Object 변환 ─────────────────────────────────
+// 주의: 브라우저가 setAttribute('style', ...) 후 getAttribute('style')로
+// 돌려받을 때 CSS를 정규화함 (bold→700, #hex→rgb(), pt→px 등)
 function cssToStyleObj(css) {
   const s = {};
   if (!css) return s;
   css.split(';').forEach(part => {
     const colonIdx = part.indexOf(':');
     if (colonIdx < 0) return;
-    const k = part.substring(0, colonIdx).trim();
+    const k = part.substring(0, colonIdx).trim().toLowerCase();
     const v = part.substring(colonIdx + 1).trim();
     if (!k || !v) return;
-    if (k === 'font-weight' && v === 'bold') s.bold = true;
-    if (k === 'font-style' && v === 'italic') s.italic = true;
-    if (k === 'text-decoration') {
+    if (k === 'font-weight') {
+      if (v === 'bold' || v === '700' || v === '800' || v === '900') s.bold = true;
+    }
+    if (k === 'font-style' && (v === 'italic' || v === 'oblique')) s.italic = true;
+    if (k === 'text-decoration' || k === 'text-decoration-line') {
       if (v.includes('underline')) s.underline = true;
       if (v.includes('line-through')) s.strikethrough = true;
     }
     if (k === 'font-size') {
-      const m = v.match(/([\d.]+)\s*pt/);
-      if (m) s.fontSize = parseFloat(m[1]);
+      var mPt = v.match(/([\d.]+)\s*pt/);
+      if (mPt) { s.fontSize = parseFloat(mPt[1]); }
+      else {
+        var mPx = v.match(/([\d.]+)\s*px/);
+        if (mPx) { s.fontSize = Math.round(parseFloat(mPx[1]) * 0.75 * 10) / 10; }
+      }
     }
-    if (k === 'color') s.color = v.replace('#','');
-    if (k === 'background-color') s.bg = v.replace('#','');
+    if (k === 'color') {
+      var c = _cssColorToHex(v);
+      if (c) s.color = c;
+    }
+    if (k === 'background-color' || k === 'background') {
+      var bg = _cssColorToHex(v);
+      if (bg) s.bg = bg;
+    }
     if (k === 'text-align') s.align = v;
-    if (k === 'vertical-align') s.valign = v;
-    if (k === 'white-space' && v === 'pre-wrap') s.wrap = true;
+    if (k === 'vertical-align') {
+      s.valign = v; // CSS 값 그대로 유지 (top/middle/bottom)
+    }
+    if (k === 'white-space' && (v === 'pre-wrap' || v === 'pre-line' || v === 'break-spaces')) s.wrap = true;
+    if (k === 'overflow-wrap' && v === 'break-word') s.wrap = true;
     // border-* parsing
-    const bm = k.match(/^border-(top|bottom|left|right)$/);
+    var bm = k.match(/^border-(top|bottom|left|right)$/);
     if (bm) {
       if (!s.border) s.border = {};
-      const parts = v.split(/\s+/);
-      const bStyle = _cssBorderStyleToExcel(parts[1] || 'solid', parts[0] || '1px');
-      const bColor = (parts[2] || '#000000').replace('#','');
-      s.border[bm[1]] = { style: bStyle, color: bColor };
+      // 브라우저 정규화된 형태: "1px solid rgb(0, 0, 0)" 또는 "1px solid #000000"
+      var bParts = v.match(/^([\d.]+\w+)\s+(\w+)\s+(.+)$/);
+      if (bParts) {
+        var bStyle = _cssBorderStyleToExcel(bParts[2], bParts[1]);
+        var bColor = _cssColorToHex(bParts[3]) || '000000';
+        s.border[bm[1]] = { style: bStyle, color: bColor };
+      }
     }
+    // 커스텀 CSS 프로퍼티로 숫자 서식 보존 (URL 인코딩된 값)
+    if (k === '--num-fmt') { try { s.numFmt = decodeURIComponent(v); } catch(e2) { s.numFmt = v; } }
   });
   return s;
 }
 
 function _cssBorderStyleToExcel(cssStyle, width) {
-  const w = parseInt(width) || 1;
+  var w = parseInt(width) || 1;
   if (cssStyle === 'dashed') return 'dashed';
   if (cssStyle === 'dotted') return 'dotted';
   if (cssStyle === 'double') return 'double';
@@ -142,7 +187,7 @@ function styleObjToCss(s) {
   if (s.color) parts.push('color:#' + s.color);
   if (s.bg) parts.push('background-color:#' + s.bg);
   if (s.align) parts.push('text-align:' + s.align);
-  if (s.valign) parts.push('vertical-align:' + s.valign);
+  if (s.valign) parts.push('vertical-align:' + (s.valign === 'center' ? 'middle' : s.valign));
   if (s.wrap) parts.push('white-space:pre-wrap');
   if (s.border) {
     const wm = {thin:'1px', medium:'2px', thick:'3px', dashed:'1px', dotted:'1px', double:'3px'};
@@ -152,6 +197,8 @@ function styleObjToCss(s) {
       parts.push('border-' + side + ':' + (wm[bs]||'1px') + ' ' + (sm[bs]||'solid') + ' #' + (bd.color||'000000'));
     }
   }
+  // 숫자 서식은 CSS가 아니지만 커스텀 프로퍼티로 보존 (CSS round-trip 유지, URL 인코딩)
+  if (s.numFmt) parts.push('--num-fmt:' + encodeURIComponent(s.numFmt));
   return parts.join(';');
 }
 
@@ -236,7 +283,7 @@ function applyStyleToSelection(ctx, styleProp, value) {
     });
   }
 
-  ctx.onStyleChange(styleMap);
+  if (ctx.onStyleChange) ctx.onStyleChange(styleMap);
   updateToolbarState(ctx);
 }
 
@@ -259,9 +306,13 @@ function fmtMerge(ctx) {
   if (!ss) return;
   if (!ctx.canMerge()) return;
   const sel = ctx.getSelection();
+  if (sel.x1 === sel.x2 && sel.y1 === sel.y2) return; // 단일 셀 병합 불가
   try {
-    ss.setMerge(sel.x1, sel.y1, sel.x2 - sel.x1 + 1, sel.y2 - sel.y1 + 1);
-    ctx.onMergeChange();
+    var cellName = colIndexToLetter(sel.x1) + (sel.y1 + 1);
+    var colspan = sel.x2 - sel.x1 + 1;
+    var rowspan = sel.y2 - sel.y1 + 1;
+    ss.setMerge(cellName, colspan, rowspan);
+    if (ctx.onMergeChange) ctx.onMergeChange();
   } catch(e) { if (typeof showToast === 'function') showToast('병합 실패: ' + e.message, 'error'); }
 }
 
@@ -271,8 +322,9 @@ function fmtUnmerge(ctx) {
   if (!ctx.canMerge()) return;
   const sel = ctx.getSelection();
   try {
-    ss.removeMerge(sel.x1, sel.y1);
-    ctx.onMergeChange();
+    var cellName = colIndexToLetter(sel.x1) + (sel.y1 + 1);
+    ss.removeMerge(cellName);
+    if (ctx.onMergeChange) ctx.onMergeChange();
   } catch(e) { if (typeof showToast === 'function') showToast('병합 해제 실패', 'error'); }
 }
 
@@ -309,7 +361,7 @@ function fmtBorder(ctx, preset, borderStyle, borderColor) {
     }
   }
   try { ss.setStyle(styleMap); } catch(e) {}
-  ctx.onStyleChange(styleMap);
+  if (ctx.onStyleChange) ctx.onStyleChange(styleMap);
 }
 
 // ============================================================
@@ -746,22 +798,69 @@ const NUM_FORMATS = {
 };
 
 function formatNumber(value, numFmt) {
-  if (!numFmt || !value) return null; // return null = use default display
-  const num = Number(value);
+  if (!numFmt || value === null || value === undefined || value === '') return null;
+  var num = Number(value);
   if (isNaN(num)) return null;
 
+  // 정확히 일치하는 간단한 서식 먼저 확인
   if (numFmt === '#,##0') return Math.round(num).toLocaleString();
   if (numFmt === '#,##0.00') return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (numFmt === '0.00%') return (num * 100).toFixed(2) + '%';
   if (numFmt === '\u20A9#,##0') return '\u20A9' + Math.round(num).toLocaleString();
   if (numFmt === 'yyyy-mm-dd') {
-    const d = _serialToDate(num);
+    var d = _serialToDate(num);
     return d ? _fmtDate(d) : null;
   }
   if (numFmt === 'yyyy-mm-dd hh:mm') {
-    const d = _serialToDate(num);
-    return d ? _fmtDateTime(d) : null;
+    var d2 = _serialToDate(num);
+    return d2 ? _fmtDateTime(d2) : null;
   }
+
+  // 복합 Excel 서식 코드 파싱 (예: "_-* #,##0_-;\-* #,##0_-;_-* \"-\"_-;_-@_-")
+  // 세미콜론으로 분리: [양수; 음수; 0; 텍스트]
+  var sections = numFmt.split(';');
+  var section = num > 0 ? sections[0] : (num < 0 ? (sections[1] || sections[0]) : (sections[2] || sections[0]));
+  if (!section) return null;
+
+  // 핵심 숫자 패턴 추출 (_, *, 리터럴 문자열 제거)
+  var pattern = section
+    .replace(/_./g, '')           // _x (공백 문자)
+    .replace(/\*./g, '')           // *x (반복 문자)
+    .replace(/"[^"]*"/g, '')       // "리터럴" 문자열
+    .replace(/\\/g, '')            // 이스케이프
+    .trim();
+
+  // 날짜 패턴 감지
+  if (/[ymd]/i.test(pattern) && /[ymd].*[ymd]/i.test(pattern)) {
+    var d3 = _serialToDate(num);
+    return d3 ? _fmtDate(d3) : null;
+  }
+
+  // % 패턴 감지
+  if (pattern.indexOf('%') >= 0) {
+    var decMatch = pattern.match(/0\.(0+)/);
+    var decimals = decMatch ? decMatch[1].length : 0;
+    return (num * 100).toFixed(decimals) + '%';
+  }
+
+  // #,##0 패턴 (소수점 포함 여부)
+  var decimalMatch = pattern.match(/#,##0\.(0+)/);
+  if (decimalMatch) {
+    var dec = decimalMatch[1].length;
+    var result = (num < 0 ? -num : num).toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
+    return num < 0 ? '-' + result : result;
+  }
+  if (pattern.indexOf('#,##0') >= 0) {
+    var result2 = Math.round(num < 0 ? -num : num).toLocaleString();
+    return num < 0 ? '-' + result2 : result2;
+  }
+
+  // 0.00 패턴 (콤마 없이)
+  var zeroDecMatch = pattern.match(/0\.(0+)/);
+  if (zeroDecMatch) {
+    return num.toFixed(zeroDecMatch[1].length);
+  }
+
   return null;
 }
 
@@ -789,28 +888,48 @@ function _fmtDateTime(d) {
 function buildContextMenu(ctx) {
   return function(obj, x, y, e) {
     var items = [];
+    // x, y 안전한 정수 변환 (Jspreadsheet CE v4는 null/undefined 전달 가능)
+    var cx = (x !== null && x !== undefined) ? parseInt(x) : null;
+    var cy = (y !== null && y !== undefined) ? parseInt(y) : null;
+
     // 잘라내기 / 복사 / 붙여넣기
     items.push({ title: '잘라내기', onclick: function() { obj.cut(); } });
     items.push({ title: '복사', onclick: function() { obj.copy(); } });
     items.push({ title: '붙여넣기', onclick: function() {
-      navigator.clipboard.readText().then(text => {
+      navigator.clipboard.readText().then(function(text) {
         if (text) obj.paste(obj.selectedCell[0], obj.selectedCell[1], text);
-      }).catch(() => {});
+      }).catch(function() {});
     }});
 
-    if (ctx.isEditable()) {
+    if (ctx.isEditable() && cy !== null && !isNaN(cy)) {
       items.push({ type: 'line' }); // separator
       items.push({ title: '위에 행 삽입', onclick: function() {
-        if (ctx.onRowInsert) ctx.onRowInsert(y, 'above');
-        else obj.insertRow(1, y, true);
+        if (ctx.onRowInsert) ctx.onRowInsert(cy, 'above');
+        else obj.insertRow(1, cy, true);
       }});
       items.push({ title: '아래에 행 삽입', onclick: function() {
-        if (ctx.onRowInsert) ctx.onRowInsert(y, 'below');
-        else obj.insertRow(1, y, false);
+        if (ctx.onRowInsert) ctx.onRowInsert(cy, 'below');
+        else obj.insertRow(1, cy, false);
       }});
       items.push({ title: '행 삭제', onclick: function() {
-        if (ctx.onRowDelete) ctx.onRowDelete(y);
-        else obj.deleteRow(y);
+        if (ctx.onRowDelete) ctx.onRowDelete(cy);
+        else obj.deleteRow(cy);
+      }});
+    }
+
+    if (ctx.isEditable() && cx !== null && !isNaN(cx)) {
+      items.push({ type: 'line' });
+      items.push({ title: '왼쪽에 열 삽입', onclick: function() {
+        if (ctx.onColumnInsert) ctx.onColumnInsert(cx, 'before');
+        else obj.insertColumn(1, cx, true);
+      }});
+      items.push({ title: '오른쪽에 열 삽입', onclick: function() {
+        if (ctx.onColumnInsert) ctx.onColumnInsert(cx, 'after');
+        else obj.insertColumn(1, cx, false);
+      }});
+      items.push({ title: '열 삭제', onclick: function() {
+        if (ctx.onColumnDelete) ctx.onColumnDelete(cx);
+        else obj.deleteColumn(cx);
       }});
     }
 
@@ -820,23 +939,23 @@ function buildContextMenu(ctx) {
       items.push({ title: '병합 해제', onclick: function() { fmtUnmerge(ctx); } });
     }
 
-    if (ctx.isEditable()) {
+    if (ctx.isEditable() && cx !== null && !isNaN(cx)) {
       items.push({ type: 'line' });
-      items.push({ title: '오름차순 정렬', onclick: function() { sortColumn(ctx, x, true); } });
-      items.push({ title: '내림차순 정렬', onclick: function() { sortColumn(ctx, x, false); } });
+      items.push({ title: '오름차순 정렬', onclick: function() { sortColumn(ctx, cx, true); } });
+      items.push({ title: '내림차순 정렬', onclick: function() { sortColumn(ctx, cx, false); } });
     }
 
     // 메모 추가/편집
-    if (ctx.isEditable()) {
+    if (ctx.isEditable() && cx !== null && cy !== null && !isNaN(cx) && !isNaN(cy)) {
       items.push({ type: 'line' });
-      const cellName = colIndexToLetter(x) + (y + 1);
-      const hasComment = _commentsMap[cellName];
-      items.push({ title: hasComment ? '메모 편집' : '메모 추가', onclick: function() { editCellComment(ctx, x, y); } });
+      var cellName = colIndexToLetter(cx) + (cy + 1);
+      var hasComment = _commentsMap[cellName];
+      items.push({ title: hasComment ? '메모 편집' : '메모 추가', onclick: function() { editCellComment(ctx, cx, cy); } });
       if (hasComment) {
         items.push({ title: '메모 삭제', onclick: function() {
           delete _commentsMap[cellName];
           addCommentIndicators(ctx, _commentsMap);
-          if (ctx.onCommentChange) ctx.onCommentChange(y, x, '');
+          if (ctx.onCommentChange) ctx.onCommentChange(cy, cx, '');
         }});
       }
     }

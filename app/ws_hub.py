@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 JAEHYUK CHO
 import asyncio
 import json
 import logging

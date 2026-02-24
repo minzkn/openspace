@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 JAEHYUK CHO
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 

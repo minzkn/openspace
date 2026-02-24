@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 JAEHYUK CHO
 import json
 import uuid
 import logging
@@ -85,8 +87,8 @@ async def ws_endpoint(websocket: WebSocket, workspace_id: str):
             elif msg_type == "batch_patch":
                 await _handle_batch_patch(websocket, workspace_id, msg, user, db, ws)
 
-            elif msg_type in ("row_insert", "row_delete"):
-                # Row operations are handled via REST API
+            elif msg_type in ("row_insert", "row_delete", "col_insert", "col_delete"):
+                # Row/column operations are handled via REST API
                 # WebSocket only receives broadcasts
                 pass
 

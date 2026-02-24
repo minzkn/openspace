@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 JAEHYUK CHO
 """
 DB 초기화 스크립트.
 - migrations/001_initial.sql 적용

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 JAEHYUK CHO
 import os
 import base64
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM

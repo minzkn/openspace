@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 JAEHYUK CHO
 import uuid
 import secrets
 from datetime import datetime, timezone, timedelta

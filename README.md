@@ -15,6 +15,7 @@
 7. [API 개요](#api-개요)
 8. [보안](#보안)
 9. [운영 주의사항](#운영-주의사항)
+10. [라이선스](#라이선스)
 
 ---
 
@@ -300,3 +301,13 @@ server {
     }
 }
 ```
+
+---
+
+## 라이선스
+
+Copyright (c) 2026 JAEHYUK CHO
+
+이 프로젝트는 [MIT License](LICENSE)로 배포됩니다.
+
+서드파티 의존성의 라이선스 정보는 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)를 참고하세요.

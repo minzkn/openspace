@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 JAEHYUK CHO
 from fastapi import HTTPException, status, Depends
 from .models import User
 from .auth import get_current_user

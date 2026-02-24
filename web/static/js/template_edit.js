@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 JAEHYUK CHO
 /* ============================================================
    template_edit.js — 서식(Template) 전체 편집기
    SpreadsheetCore 공유 모듈 사용
@@ -20,6 +22,9 @@ const SAVE_DELAY = 800;
 
 // 현재 선택 범위
 let selX1 = 0, selY1 = 0, selX2 = 0, selY2 = 0;
+
+// 숫자 서식 맵 (cellName → numFmt 문자열)
+let numFmtMap = {};
 
 // 수식 엔진
 if (typeof formula !== 'undefined') {
@@ -160,11 +165,13 @@ async function loadSheet(index) {
   hideColPanel();
 
   const container = document.getElementById('spreadsheet');
-  container.innerHTML = '<div style="padding:20px;color:#64748b">로딩 중...</div>';
+
+  // ★ destroy를 innerHTML 변경 전에 수행 (DOM 정리 순서 중요)
   if (spreadsheet) {
     try { jspreadsheet.destroy(container); } catch(e) {}
     spreadsheet = null;
   }
+  container.innerHTML = '<div style="padding:20px;color:#64748b">로딩 중...</div>';
 
   const res = await apiFetch(
     `/api/admin/templates/${templateData.id}/sheets/${sheet.id}/snapshot`
@@ -188,18 +195,32 @@ async function loadSheet(index) {
   const mergeCells = data.merges && Object.keys(data.merges).length > 0 ? data.merges : undefined;
   const freezeColumns = data.freeze_columns > 0 ? data.freeze_columns : undefined;
 
+  // 숫자 서식 맵 초기화
+  numFmtMap = data.num_formats || {};
+
+  // ★ 컨테이너 완전 초기화 + 스크롤 위치 리셋
   container.innerHTML = '';
+  container.scrollLeft = 0;
+  container.scrollTop = 0;
+
+  // ★ 부모 요소에서 안정적인 너비 계산
+  var parentEl = container.parentElement || container;
+  var tw = parentEl.offsetWidth || container.offsetWidth || (window.innerWidth - 260);
+  if (tw < 100) tw = window.innerWidth - 260;
+  var th = window.innerHeight - 360;
+  if (th < 200) th = 400;
+
   spreadsheet = jspreadsheet(container, {
     data: gridData,
     columns,
     minDimensions: [columns.length, numRows],
     tableOverflow: true,
-    tableWidth: (container.offsetWidth || (window.innerWidth - 260)) + 'px',
-    tableHeight: (window.innerHeight - 360) + 'px',
+    tableWidth: tw + 'px',
+    tableHeight: th + 'px',
     lazyLoading: true,
     loadingSpin: true,
-    allowInsertColumn: false,
-    allowDeleteColumn: false,
+    allowInsertColumn: true,
+    allowDeleteColumn: true,
     allowInsertRow: true,
     allowDeleteRow: true,
     mergeCells,
@@ -210,7 +231,20 @@ async function loadSheet(index) {
     onselection: handleSelection,
     onmerge: handleMerge,
     contextMenu: SpreadsheetCore.buildContextMenu(ctx),
+    updateTable: function(instance, cell, col, row, val, label, cellName) {
+      // cellName이 없는 경우 직접 계산 (jspreadsheet 버전 호환)
+      var cn = cellName || (SpreadsheetCore.colIndexToLetter(col) + (row + 1));
+      var fmt = numFmtMap[cn];
+      if (fmt) {
+        var formatted = SpreadsheetCore.formatNumber(val, fmt);
+        if (formatted !== null) cell.innerHTML = formatted;
+      }
+    },
   });
+
+  // ★ 시트 전환 후 스크롤 위치 초기화
+  var wrapper = container.querySelector('.jexcel_content');
+  if (wrapper) { wrapper.scrollLeft = 0; wrapper.scrollTop = 0; }
 
   // 스타일 적용
   if (data.styles && Object.keys(data.styles).length > 0) {
@@ -536,6 +570,12 @@ async function saveStyleBatch(styleMap) {
     const row_index = parseInt(m[2]) - 1;
     const s = SpreadsheetCore.cssToStyleObj(css);
     batch.push({ row_index, col_index, style: JSON.stringify(s) });
+    // numFmtMap 갱신 (숫자 서식 실시간 표시용)
+    if (s.numFmt) {
+      numFmtMap[cellName] = s.numFmt;
+    } else {
+      delete numFmtMap[cellName];
+    }
   }
   if (!batch.length) return;
   await apiFetch(

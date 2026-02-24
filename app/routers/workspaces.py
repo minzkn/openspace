@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 JAEHYUK CHO
 import io
 import json
 import uuid
@@ -550,10 +552,12 @@ async def export_workspace_xlsx(
     wb.save(buf)
     buf.seek(0)
     safe_name = ws.name.replace(" ", "_")[:50]
+    from urllib.parse import quote
+    encoded_name = quote(safe_name + ".xlsx")
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={safe_name}.xlsx"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"},
     )
 
 

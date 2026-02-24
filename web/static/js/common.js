@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 JAEHYUK CHO
 /* ============================================================
    common.js — CSRF fetch wrapper, toast, modal, utils
    ============================================================ */

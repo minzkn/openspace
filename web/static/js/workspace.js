@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 JAEHYUK CHO
 /* ============================================================
    workspace.js — Jspreadsheet + WebSocket 실시간 협업
    SpreadsheetCore 공유 모듈 사용
@@ -21,6 +23,9 @@ let renamingWsSheetIndex = -1;
 
 // 현재 선택 범위
 let selX1 = 0, selY1 = 0, selX2 = 0, selY2 = 0;
+
+// 숫자 서식 맵 (cellName → numFmt 문자열)
+let numFmtMap = {};
 
 const BATCH_DELAY = 100;
 
@@ -49,6 +54,12 @@ const ctx = {
       const row = parseInt(m[2]) - 1;
       const s = SpreadsheetCore.cssToStyleObj(css);
       patches.push({ row, col, value: null, style: JSON.stringify(s) });
+      // numFmtMap 갱신 (숫자 서식 실시간 표시용)
+      if (s.numFmt) {
+        numFmtMap[cellName] = s.numFmt;
+      } else {
+        delete numFmtMap[cellName];
+      }
     }
     if (patches.length > 0) sendBatchPatch(sheet.id, patches);
   },
@@ -72,6 +83,8 @@ const ctx = {
   },
   onRowInsert: (rowIndex, direction) => { insertRowApi(rowIndex, direction); },
   onRowDelete: (rowIndex) => { deleteRowApi(rowIndex); },
+  onColumnInsert: (colIndex, direction) => { insertColApi(colIndex, direction); },
+  onColumnDelete: (colIndex) => { deleteColApi(colIndex); },
   onCommentChange: (row, col, comment) => { saveComment(row, col, comment); },
   undoManager: new SpreadsheetCore.UndoManager(),
 };
@@ -174,11 +187,13 @@ async function loadSheet(index) {
   if (!sheet) return;
 
   const container = document.getElementById('spreadsheet');
-  container.innerHTML = '<div style="padding:20px;color:#64748b">로딩 중...</div>';
+
+  // ★ destroy를 innerHTML 변경 전에 수행 (DOM 정리 순서 중요)
   if (spreadsheet) {
     try { jspreadsheet.destroy(container); } catch(e) {}
     spreadsheet = null;
   }
+  container.innerHTML = '<div style="padding:20px;color:#64748b">로딩 중...</div>';
 
   const res = await apiFetch(
     `/api/workspaces/${workspaceData.id}/sheets/${sheet.id}/snapshot`
@@ -190,7 +205,19 @@ async function loadSheet(index) {
   const { data } = await res.json();
 
   const isEditable = !isClosed || IS_ADMIN;
-  const columns = buildColumnDefs(sheet.columns, isEditable);
+  let columns = buildColumnDefs(sheet.columns, isEditable);
+  // snapshot에서 num_cols가 더 크면 컬럼 보충
+  if (columns.length < data.num_cols) {
+    for (let ci = columns.length; ci < data.num_cols; ci++) {
+      columns.push({ title: SpreadsheetCore.colIndexToLetter(ci), width: 120, type: 'text', readOnly: false });
+    }
+  }
+  // 최소 5열 보장
+  if (columns.length === 0) {
+    for (let ci = 0; ci < Math.max(data.num_cols, 5); ci++) {
+      columns.push({ title: SpreadsheetCore.colIndexToLetter(ci), width: 120, type: 'text', readOnly: false });
+    }
+  }
   const numRows = Math.max(data.num_rows, 100);
 
   const gridData = [];
@@ -203,19 +230,33 @@ async function loadSheet(index) {
   const mergeCells = data.merges && Object.keys(data.merges).length > 0 ? data.merges : undefined;
   const freezeColumns = data.freeze_columns > 0 ? data.freeze_columns : undefined;
 
+  // 숫자 서식 맵 초기화
+  numFmtMap = data.num_formats || {};
+
+  // ★ 컨테이너 완전 초기화 + 스크롤 위치 리셋
   container.innerHTML = '';
+  container.scrollLeft = 0;
+  container.scrollTop = 0;
+
+  // ★ 부모 요소에서 안정적인 너비 계산
+  var parentEl = container.parentElement || container;
+  var tw = parentEl.offsetWidth || container.offsetWidth || (window.innerWidth - 260);
+  if (tw < 100) tw = window.innerWidth - 260;
+  var th = window.innerHeight - 280;
+  if (th < 200) th = 400;
+
   spreadsheet = jspreadsheet(container, {
     data: gridData,
     columns,
     minDimensions: [columns.length, numRows],
     tableOverflow: true,
-    tableWidth: (container.offsetWidth || (window.innerWidth - 260)) + 'px',
-    tableHeight: (window.innerHeight - 260) + 'px',
+    tableWidth: tw + 'px',
+    tableHeight: th + 'px',
     lazyLoading: true,
     loadingSpin: true,
     editable: isEditable,
-    allowInsertColumn: false,
-    allowDeleteColumn: false,
+    allowInsertColumn: true,
+    allowDeleteColumn: true,
     mergeCells,
     freezeColumns,
     onchange: handleCellChange,
@@ -224,7 +265,20 @@ async function loadSheet(index) {
     onselection: handleSelection,
     onmerge: IS_ADMIN ? handleMerge : undefined,
     contextMenu: SpreadsheetCore.buildContextMenu(ctx),
+    updateTable: function(instance, cell, col, row, val, label, cellName) {
+      // cellName이 없는 경우 직접 계산 (jspreadsheet 버전 호환)
+      var cn = cellName || (SpreadsheetCore.colIndexToLetter(col) + (row + 1));
+      var fmt = numFmtMap[cn];
+      if (fmt) {
+        var formatted = SpreadsheetCore.formatNumber(val, fmt);
+        if (formatted !== null) cell.innerHTML = formatted;
+      }
+    },
   });
+
+  // ★ 시트 전환 후 스크롤 위치 초기화
+  var wrapper = container.querySelector('.jexcel_content');
+  if (wrapper) { wrapper.scrollLeft = 0; wrapper.scrollTop = 0; }
 
   // 스타일 적용
   if (data.styles && Object.keys(data.styles).length > 0) {
@@ -416,6 +470,10 @@ function handleWsMessage(msg) {
     handleRemoteRowOp(msg);
     return;
   }
+  if (msg.type === 'col_insert' || msg.type === 'col_delete') {
+    handleRemoteColOp(msg);
+    return;
+  }
   if (msg.type === 'workspace_status') {
     isClosed = msg.status === 'CLOSED';
     updateStatusBadge(msg.status);
@@ -473,6 +531,12 @@ function applyRemotePatch(msg) {
       const s = JSON.parse(msg.style);
       const css = SpreadsheetCore.styleObjToCss(s);
       spreadsheet.setStyle({ [cellName]: css });
+      // numFmtMap 갱신 (원격 사용자의 숫자 서식 변경)
+      if (s.numFmt) {
+        numFmtMap[cellName] = s.numFmt;
+      } else {
+        delete numFmtMap[cellName];
+      }
     } catch(e) {}
   }
   if (msg.comment !== undefined && msg.comment !== null) {
@@ -491,6 +555,8 @@ function handleRemoteRowOp(msg) {
   const sheet = sheets[currentSheetIndex];
   if (!sheet || msg.sheet_id !== sheet.id) return;
   if (!spreadsheet) return;
+  // 자신이 발행한 메시지는 이미 로컬 적용됨 → 스킵
+  if (msg.updated_by === CURRENT_USER) return;
   if (msg.type === 'row_insert') {
     try { spreadsheet.insertRow(msg.count || 1, msg.row_index, true); } catch(e) {}
   } else if (msg.type === 'row_delete') {
@@ -530,6 +596,53 @@ async function deleteRowApi(rowIndex) {
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
     showToast(e.detail || '행 삭제 실패', 'error');
+  }
+}
+
+// ── 열 삽입/삭제 API ──────────────────────────────────────────
+async function insertColApi(colIndex, direction) {
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  // jspreadsheet CE v4: insertColumn(num, colIndex, insertBefore)
+  // insertBefore=1 → 왼쪽, insertBefore=0 → 오른쪽
+  try { spreadsheet.insertColumn(1, colIndex, direction === 'before' ? 1 : 0); } catch(e) {}
+  const res = await apiFetch(
+    `/api/workspaces/${workspaceData.id}/sheets/${sheet.id}/cols/insert`,
+    { method: 'POST', body: JSON.stringify({ col_index: colIndex, count: 1, direction }) }
+  );
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast(e.detail || '열 삽입 실패', 'error');
+  }
+}
+
+async function deleteColApi(colIndex) {
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  try { spreadsheet.deleteColumn(colIndex); } catch(e) {}
+  const res = await apiFetch(
+    `/api/workspaces/${workspaceData.id}/sheets/${sheet.id}/cols/delete`,
+    { method: 'POST', body: JSON.stringify({ col_indices: [colIndex] }) }
+  );
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast(e.detail || '열 삭제 실패', 'error');
+  }
+}
+
+function handleRemoteColOp(msg) {
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet || msg.sheet_id !== sheet.id) return;
+  if (!spreadsheet) return;
+  // 자신이 발행한 메시지는 이미 로컬 적용됨 → 스킵
+  if (msg.updated_by === CURRENT_USER) return;
+  if (msg.type === 'col_insert') {
+    try { spreadsheet.insertColumn(msg.count || 1, msg.col_index, true); } catch(e) {}
+  } else if (msg.type === 'col_delete') {
+    const indices = msg.col_indices || [msg.col_index];
+    for (let i = indices.length - 1; i >= 0; i--) {
+      try { spreadsheet.deleteColumn(indices[i]); } catch(e) {}
+    }
   }
 }
 

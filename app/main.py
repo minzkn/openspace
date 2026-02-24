@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 JAEHYUK CHO
 import logging
 import time
 from pathlib import Path
@@ -260,7 +262,8 @@ async def workspace_list_page(request: Request):
 @app.get("/workspaces/{workspace_id}", response_class=HTMLResponse, include_in_schema=False)
 async def workspace_page(workspace_id: str, request: Request):
     import json
-    from .models import TemplateSheet
+    from .models import TemplateSheet, WorkspaceCell
+    from openpyxl.utils import get_column_letter
     with db_session() as db:
         user = get_current_user_optional(request, db)
         if not user:
@@ -290,6 +293,33 @@ async def workspace_page(workspace_id: str, request: Request):
                         "col_type": c.col_type,
                         "is_readonly": bool(c.is_readonly),
                         "width": c.width or 120,
+                    })
+            # template_sheet_id=None인 경우 셀 데이터 + 병합에서 컬럼 수 추론
+            if not cols:
+                from sqlalchemy import func
+                max_col = db.query(func.max(WorkspaceCell.col_index)).filter(
+                    WorkspaceCell.sheet_id == s.id
+                ).scalar()
+                num_cols = (max_col or 0) + 1
+                # 병합 데이터에서도 최대 컬럼 추론
+                if s.merges:
+                    try:
+                        import json as _j
+                        from openpyxl.utils import range_boundaries
+                        for rng in _j.loads(s.merges):
+                            _, _, mc, _ = range_boundaries(rng)
+                            num_cols = max(num_cols, mc)
+                    except Exception:
+                        pass
+                num_cols = max(num_cols, 5)
+                for ci in range(num_cols):
+                    cols.append({
+                        "id": f"auto-{ci}",
+                        "col_index": ci,
+                        "col_header": get_column_letter(ci + 1),
+                        "col_type": "text",
+                        "is_readonly": False,
+                        "width": 120,
                     })
             sheets_data.append({
                 "id": s.id,

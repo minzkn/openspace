@@ -293,3 +293,113 @@ a { text-decoration: none; color: inherit; }
   cursor: pointer; border-radius: 3px; font-size: 13px;
 }
 .fmt-dropdown-item:hover { background: var(--bg); }
+.fmt-dropdown-sep { height: 1px; background: var(--border); margin: 4px 0; }
+
+/* ---- Format select (font size, number format) ---- */
+.fmt-select {
+  height: 26px; padding: 0 4px; border: 1px solid var(--border);
+  border-radius: 3px; font-size: 12px; background: var(--surface);
+  cursor: pointer; color: var(--text);
+}
+.fmt-select:focus { outline: none; border-color: var(--primary); }
+
+/* ---- Formula bar ---- */
+.formula-bar {
+  display: flex; align-items: center; gap: 0;
+  padding: 0; margin-bottom: 2px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); height: 28px;
+}
+.formula-cell-ref {
+  min-width: 60px; max-width: 80px; padding: 0 8px;
+  font-size: 12px; font-weight: 600; color: var(--text);
+  border-right: 1px solid var(--border);
+  text-align: center; line-height: 26px;
+  user-select: none; white-space: nowrap; overflow: hidden;
+}
+.formula-fx {
+  padding: 0 6px; font-size: 12px; font-style: italic;
+  color: var(--text-muted); border-right: 1px solid var(--border);
+  line-height: 26px; user-select: none;
+}
+.formula-input {
+  flex: 1; border: none; outline: none; padding: 0 8px;
+  font-size: 13px; font-family: monospace; background: transparent;
+  height: 100%;
+}
+.formula-input:focus { background: #fffff0; }
+
+/* ---- Find / Replace panel ---- */
+.find-panel {
+  position: fixed; top: 60px; right: 24px; z-index: 600;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: 0 4px 16px rgba(0,0,0,.15);
+  padding: 8px 10px; display: none; flex-direction: column; gap: 6px;
+  min-width: 360px;
+}
+.find-panel.open { display: flex; }
+.find-row { display: flex; align-items: center; gap: 4px; }
+.find-input {
+  flex: 1; padding: 4px 8px; border: 1px solid var(--border);
+  border-radius: 3px; font-size: 13px; min-width: 120px;
+}
+.find-input:focus { outline: none; border-color: var(--primary); }
+.find-count { font-size: 12px; color: var(--text-muted); min-width: 60px; text-align: center; }
+.find-option { font-size: 12px; display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+
+/* ---- Status bar ---- */
+.status-bar {
+  display: flex; align-items: center;
+  padding: 4px 12px; margin-top: 2px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); min-height: 24px;
+  font-size: 12px; color: var(--text-muted);
+  white-space: nowrap; overflow-x: auto;
+}
+
+/* ---- Autofill handle ---- */
+.autofill-handle {
+  position: absolute; width: 8px; height: 8px;
+  background: var(--primary); border: 1px solid #fff;
+  cursor: crosshair; z-index: 50;
+  display: none;
+}
+.autofill-handle.dragging { background: var(--primary-hover); }
+
+/* ---- Cell comment tooltip ---- */
+.cell-comment-indicator {
+  position: absolute; top: 0; right: 0;
+  width: 0; height: 0;
+  border-left: 6px solid transparent;
+  border-top: 6px solid #e53935;
+  pointer-events: none;
+}
+.cell-comment-tooltip {
+  position: fixed; z-index: 700;
+  background: #fffde7; border: 1px solid #f9a825;
+  border-radius: 4px; padding: 6px 10px;
+  font-size: 12px; color: #333;
+  box-shadow: 0 2px 8px rgba(0,0,0,.15);
+  max-width: 300px; display: none;
+  pointer-events: none;
+}
+
+/* ---- Print styles ---- */
+@media print {
+  .sidebar, .topbar, .format-toolbar, .formula-bar, .find-panel,
+  .status-bar, .workspace-header, .workspace-actions, .sheet-tabs-row,
+  .editor-topbar, .col-panel, .sheet-tabs-wrap, .save-indicator,
+  .closed-overlay, .autofill-handle, #toast-container,
+  .btn, .modal-overlay { display: none !important; }
+
+  .app-layout { display: block !important; }
+  .main-area { overflow: visible !important; }
+  .content { padding: 0 !important; overflow: visible !important; }
+  #spreadsheet-container, #spreadsheet-wrap, #spreadsheet {
+    overflow: visible !important;
+    width: 100% !important;
+    height: auto !important;
+  }
+  .jexcel { overflow: visible !important; }
+  .jexcel_content { overflow: visible !important; max-height: none !important; }
+}

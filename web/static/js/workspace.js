@@ -1,5 +1,6 @@
 /* ============================================================
    workspace.js — Jspreadsheet + WebSocket 실시간 협업
+   SpreadsheetCore 공유 모듈 사용
 
    셀 번호 체계:
      col_index 0 → A열, 1 → B열, 2 → C열, ...
@@ -27,34 +28,83 @@ const BATCH_DELAY = 100;
 if (typeof formula !== 'undefined') {
   jspreadsheet.setExtensions({ formula });
 }
+SpreadsheetCore.registerCustomFormulas();
 
-// ── 커스텀 수식 ────────────────────────────────────────────────
-(function registerCustomFormulas() {
-  var fm = (jspreadsheet && jspreadsheet.formula) || (typeof formula !== 'undefined' ? formula : null);
-  if (!fm || typeof fm.setFormula !== 'function') return;
-  var EPOCH = new Date(1899, 11, 30);
-  fm.setFormula({
-    TIME: function(h, m, s) { return (Number(h) * 3600 + Number(m) * 60 + Number(s)) / 86400; },
-    DATE: function(y, m, d) { var dt = new Date(Number(y), Number(m)-1, Number(d)); return Math.floor((dt-EPOCH)/86400000); },
-    TODAY: function() { var t = new Date(); t.setHours(0,0,0,0); return Math.floor((t-EPOCH)/86400000); },
-    NOW: function() { return (new Date()-EPOCH)/86400000; },
-    HOUR: function(t) { return Math.floor(((Number(t)%1+1)%1)*24); },
-    MINUTE: function(t) { return Math.floor(((Number(t)%1+1)%1)*24%1*60); },
-    SECOND: function(t) { return Math.round(((Number(t)%1+1)%1)*24%1*3600%60); },
-  });
-})();
+// ── SpreadsheetCore 컨텍스트 ────────────────────────────────
+const ctx = {
+  getSpreadsheet: () => spreadsheet,
+  getSelection: () => ({ x1: selX1, y1: selY1, x2: selX2, y2: selY2 }),
+  isEditable: () => !isClosed || IS_ADMIN,
+  canMerge: () => IS_ADMIN,
+  getCurrentSheet: () => sheets[currentSheetIndex],
+  onStyleChange: (styleMap) => {
+    // CSS → style JSON → WebSocket patch
+    const sheet = sheets[currentSheetIndex];
+    if (!sheet) return;
+    const patches = [];
+    for (const [cellName, css] of Object.entries(styleMap)) {
+      const m = cellName.match(/^([A-Z]+)(\d+)$/);
+      if (!m) continue;
+      const col = SpreadsheetCore.letterToColIndex(m[1]);
+      const row = parseInt(m[2]) - 1;
+      const s = SpreadsheetCore.cssToStyleObj(css);
+      patches.push({ row, col, value: null, style: JSON.stringify(s) });
+    }
+    if (patches.length > 0) sendBatchPatch(sheet.id, patches);
+  },
+  onMergeChange: () => { saveMerges(); },
+  onUndoRedoValue: (changes, isUndo) => {
+    // Undo/Redo 값 변경 시 WebSocket으로 전송
+    const sheet = sheets[currentSheetIndex];
+    if (!sheet) return;
+    const patches = changes.map(c => ({
+      row: c.row, col: c.col,
+      value: isUndo ? c.oldVal : c.newVal,
+      style: null,
+    }));
+    if (patches.length > 0) sendBatchPatch(sheet.id, patches);
+  },
+  onDeleteCells: (changes) => {
+    const sheet = sheets[currentSheetIndex];
+    if (!sheet) return;
+    const patches = changes.map(c => ({ row: c.row, col: c.col, value: '', style: null }));
+    if (patches.length > 0) sendBatchPatch(sheet.id, patches);
+  },
+  onRowInsert: (rowIndex, direction) => { insertRowApi(rowIndex, direction); },
+  onRowDelete: (rowIndex) => { deleteRowApi(rowIndex); },
+  onCommentChange: (row, col, comment) => { saveComment(row, col, comment); },
+  undoManager: new SpreadsheetCore.UndoManager(),
+};
 
-function colIndexToLetter(idx) {
-  var letter = '', n = idx;
-  while (n >= 0) { letter = String.fromCharCode(65 + (n % 26)) + letter; n = Math.floor(n / 26) - 1; }
-  return letter;
+// ── 전역 함수 바인딩 (HTML onclick 호환) ────────────────────
+function colIndexToLetter(idx) { return SpreadsheetCore.colIndexToLetter(idx); }
+function letterToColIndex(l) { return SpreadsheetCore.letterToColIndex(l); }
+function toggleDropdown(id) { SpreadsheetCore.toggleDropdown(id); }
+function closeAllDropdowns() { SpreadsheetCore.closeAllDropdowns(); }
+function fmtBold() { SpreadsheetCore.fmtBold(ctx); }
+function fmtItalic() { SpreadsheetCore.fmtItalic(ctx); }
+function fmtUnderline() { SpreadsheetCore.fmtUnderline(ctx); }
+function fmtStrikethrough() { SpreadsheetCore.fmtStrikethrough(ctx); }
+function fmtColor(hex) { SpreadsheetCore.fmtColor(ctx, hex); }
+function fmtBg(hex) { SpreadsheetCore.fmtBg(ctx, hex); }
+function fmtAlign(dir) { SpreadsheetCore.fmtAlign(ctx, dir); }
+function fmtValign(dir) { SpreadsheetCore.fmtValign(ctx, dir); }
+function fmtWrap() { SpreadsheetCore.fmtWrap(ctx); }
+function fmtFontSize(size) { SpreadsheetCore.fmtFontSize(ctx, size); }
+function fmtNumFormat(fmt) { SpreadsheetCore.fmtNumFormat(ctx, fmt); }
+function fmtMerge() { SpreadsheetCore.fmtMerge(ctx); }
+function fmtUnmerge() { SpreadsheetCore.fmtUnmerge(ctx); }
+function fmtBorder(preset) { SpreadsheetCore.fmtBorder(ctx, preset); }
+function fmtBorderStyled(preset) {
+  const style = (document.getElementById('border-style-select') || {}).value || 'thin';
+  const color = (document.getElementById('border-color-val') || {}).value || '000000';
+  SpreadsheetCore.fmtBorder(ctx, preset, style, color);
 }
-
-function letterToColIndex(letter) {
-  let result = 0;
-  for (let i = 0; i < letter.length; i++) result = result * 26 + (letter.charCodeAt(i) - 64);
-  return result - 1;
-}
+function findNext() { SpreadsheetCore.findNext(ctx); }
+function findPrev() { SpreadsheetCore.findPrev(ctx); }
+function replaceCurrent() { SpreadsheetCore.replaceCurrent(ctx); }
+function replaceAll() { SpreadsheetCore.replaceAll(ctx); }
+function printSheet() { SpreadsheetCore.printSpreadsheet(); }
 
 document.addEventListener('DOMContentLoaded', init);
 
@@ -64,12 +114,29 @@ function init() {
   workspaceData = JSON.parse(dataEl.textContent);
   sheets = workspaceData.sheets || [];
   isClosed = workspaceData.status === 'CLOSED';
-  initColorSwatches();
+  SpreadsheetCore.initColorSwatches(ctx);
+  SpreadsheetCore.registerShortcuts(ctx);
+  initFormulaBar();
   renderTabs();
   if (sheets.length > 0) loadSheet(0);
   connectWebSocket();
-  // 전역 클릭으로 드롭다운 닫기
-  document.addEventListener('click', closeAllDropdowns);
+  document.addEventListener('click', SpreadsheetCore.closeAllDropdowns);
+}
+
+function initFormulaBar() {
+  const input = document.getElementById('formula-input');
+  if (!input) return;
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      SpreadsheetCore.handleFormulaBarEnter(ctx, input);
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      SpreadsheetCore.updateFormulaBar(ctx);
+      input.blur();
+    }
+  });
 }
 
 // ── 시트 탭 렌더링 ────────────────────────────────────────────
@@ -78,7 +145,7 @@ function renderTabs() {
   tabsEl.innerHTML = sheets.map((s, i) => {
     const isActive = i === currentSheetIndex;
     const delBtn = (IS_ADMIN && sheets.length > 1)
-      ? `<span class="tab-del" onclick="deleteWsSheet(${i})" title="삭제">×</span>`
+      ? `<span class="tab-del" onclick="deleteWsSheet(${i})" title="삭제">\u00d7</span>`
       : '';
     return `<div class="sheet-tab ${isActive ? 'active' : ''}"
         onclick="handleTabClick(event, ${i})"
@@ -96,6 +163,7 @@ function handleTabClick(e, index) {
 function switchSheet(index) {
   if (index === currentSheetIndex && spreadsheet) return;
   currentSheetIndex = index;
+  ctx.undoManager.clear();
   renderTabs();
   loadSheet(index);
 }
@@ -132,9 +200,7 @@ async function loadSheet(index) {
     gridData.push(row);
   }
 
-  // 병합
   const mergeCells = data.merges && Object.keys(data.merges).length > 0 ? data.merges : undefined;
-  // 틀 고정
   const freezeColumns = data.freeze_columns > 0 ? data.freeze_columns : undefined;
 
   container.innerHTML = '';
@@ -144,7 +210,7 @@ async function loadSheet(index) {
     minDimensions: [columns.length, numRows],
     tableOverflow: true,
     tableWidth: (container.offsetWidth || (window.innerWidth - 260)) + 'px',
-    tableHeight: (window.innerHeight - 200) + 'px',
+    tableHeight: (window.innerHeight - 260) + 'px',
     lazyLoading: true,
     loadingSpin: true,
     editable: isEditable,
@@ -157,6 +223,7 @@ async function loadSheet(index) {
     onbeforechange: handleBeforeChange,
     onselection: handleSelection,
     onmerge: IS_ADMIN ? handleMerge : undefined,
+    contextMenu: SpreadsheetCore.buildContextMenu(ctx),
   });
 
   // 스타일 적용
@@ -174,6 +241,21 @@ async function loadSheet(index) {
   // 포맷 툴바 표시 여부
   const toolbar = document.getElementById('format-toolbar');
   if (toolbar) toolbar.style.display = isEditable ? 'flex' : 'none';
+  const formulaBar = document.getElementById('formula-bar');
+  if (formulaBar) formulaBar.style.display = isEditable ? 'flex' : 'none';
+
+  // 셀 메모 표시
+  if (data.comments && Object.keys(data.comments).length > 0) {
+    SpreadsheetCore.addCommentIndicators(ctx, data.comments);
+  }
+
+  // 조건부 서식 적용
+  if (data.conditional_formats && data.conditional_formats.length > 0) {
+    setTimeout(() => SpreadsheetCore.applyConditionalFormats(ctx, data.conditional_formats), 100);
+  }
+
+  // 자동 채우기 핸들 초기화
+  SpreadsheetCore.initAutofill(ctx);
 }
 
 function buildColumnDefs(columns, isEditable) {
@@ -196,6 +278,11 @@ function handleBeforeChange(instance, cell, x, y, value) {
   if (!sheet) return value;
   const col = sheet.columns[x];
   if (col && col.is_readonly && !IS_ADMIN) return false;
+  // Capture old value for undo
+  try {
+    const oldVal = instance.getValueFromCoords(parseInt(x), parseInt(y)) || '';
+    cell._undoOldVal = oldVal;
+  } catch(e) {}
   return value;
 }
 
@@ -211,6 +298,13 @@ function handleCellChange(instance, cell, x, y, value) {
       if (raw !== undefined && raw !== null) rawValue = String(raw);
     }
   } catch(e) {}
+
+  // Undo support
+  const oldVal = cell._undoOldVal || '';
+  if (ctx.undoManager && oldVal !== rawValue) {
+    ctx.undoManager.push({ type: 'value', changes: [{ row: parseInt(y), col: parseInt(x), oldVal, newVal: rawValue }] });
+  }
+
   queuePatch(sheet.id, parseInt(y), parseInt(x), rawValue, null);
 }
 
@@ -218,24 +312,32 @@ function handlePaste(instance, data) {
   const sheet = sheets[currentSheetIndex];
   if (!sheet) return;
   const patches = [];
+  const undoChanges = [];
   data.forEach(item => {
     let rawValue = item[3];
+    let oldVal = '';
     try {
       const gridData = instance.options.data;
       const iy = item[0], ix = item[1];
+      oldVal = instance.getValueFromCoords(ix, iy) || '';
       if (gridData && iy < gridData.length && gridData[iy] && ix < gridData[iy].length) {
         const raw = gridData[iy][ix];
         if (raw !== undefined && raw !== null) rawValue = String(raw);
       }
     } catch(e) {}
     patches.push({ row: item[0], col: item[1], value: rawValue });
+    undoChanges.push({ row: item[0], col: item[1], oldVal, newVal: rawValue });
   });
+  if (undoChanges.length > 0 && ctx.undoManager) {
+    ctx.undoManager.push({ type: 'value', changes: undoChanges });
+  }
   if (patches.length > 0) sendBatchPatch(sheet.id, patches);
 }
 
 function handleSelection(el, x1, y1, x2, y2) {
   selX1 = x1; selY1 = y1; selX2 = x2; selY2 = y2;
-  updateToolbarState();
+  SpreadsheetCore.updateToolbarState(ctx);
+  if (ctx._positionAutofillHandle) ctx._positionAutofillHandle();
 }
 
 // ── 패치 큐 ───────────────────────────────────────────────────
@@ -310,6 +412,10 @@ function handleWsMessage(msg) {
     showActivity(`${msg.updated_by} 편집 중`);
     return;
   }
+  if (msg.type === 'row_insert' || msg.type === 'row_delete') {
+    handleRemoteRowOp(msg);
+    return;
+  }
   if (msg.type === 'workspace_status') {
     isClosed = msg.status === 'CLOSED';
     updateStatusBadge(msg.status);
@@ -358,18 +464,86 @@ function applyRemotePatch(msg) {
   const sheet = sheets[currentSheetIndex];
   if (!sheet || msg.sheet_id !== sheet.id) return;
   if (!spreadsheet) return;
-  // 값 적용
   if (msg.value !== undefined && msg.value !== null) {
     try { spreadsheet.setValueFromCoords(msg.col, msg.row, msg.value || '', true); } catch(e) {}
   }
-  // 스타일 적용
   if (msg.style) {
     try {
-      const cellName = colIndexToLetter(msg.col) + (msg.row + 1);
+      const cellName = SpreadsheetCore.colIndexToLetter(msg.col) + (msg.row + 1);
       const s = JSON.parse(msg.style);
-      const css = styleObjToCss(s);
+      const css = SpreadsheetCore.styleObjToCss(s);
       spreadsheet.setStyle({ [cellName]: css });
     } catch(e) {}
+  }
+  if (msg.comment !== undefined && msg.comment !== null) {
+    const cellName = SpreadsheetCore.colIndexToLetter(msg.col) + (msg.row + 1);
+    const commentsMap = SpreadsheetCore.getCommentsMap();
+    if (msg.comment) {
+      commentsMap[cellName] = msg.comment;
+    } else {
+      delete commentsMap[cellName];
+    }
+    SpreadsheetCore.addCommentIndicators(ctx, commentsMap);
+  }
+}
+
+function handleRemoteRowOp(msg) {
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet || msg.sheet_id !== sheet.id) return;
+  if (!spreadsheet) return;
+  if (msg.type === 'row_insert') {
+    try { spreadsheet.insertRow(msg.count || 1, msg.row_index, true); } catch(e) {}
+  } else if (msg.type === 'row_delete') {
+    const indices = msg.row_indices || [msg.row_index];
+    for (let i = indices.length - 1; i >= 0; i--) {
+      try { spreadsheet.deleteRow(indices[i]); } catch(e) {}
+    }
+  }
+}
+
+// ── 행 삽입/삭제 API ──────────────────────────────────────────
+async function insertRowApi(rowIndex, direction) {
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  const actualRow = direction === 'below' ? rowIndex + 1 : rowIndex;
+  // 로컬 즉시 적용
+  try { spreadsheet.insertRow(1, actualRow, true); } catch(e) {}
+  // 서버 API
+  const res = await apiFetch(
+    `/api/workspaces/${workspaceData.id}/sheets/${sheet.id}/rows/insert`,
+    { method: 'POST', body: JSON.stringify({ row_index: actualRow, count: 1, direction }) }
+  );
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast(e.detail || '행 삽입 실패', 'error');
+  }
+}
+
+async function deleteRowApi(rowIndex) {
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  try { spreadsheet.deleteRow(rowIndex); } catch(e) {}
+  const res = await apiFetch(
+    `/api/workspaces/${workspaceData.id}/sheets/${sheet.id}/rows/delete`,
+    { method: 'POST', body: JSON.stringify({ row_indices: [rowIndex] }) }
+  );
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast(e.detail || '행 삭제 실패', 'error');
+  }
+}
+
+// ── 셀 메모 저장 ─────────────────────────────────────────────
+async function saveComment(row, col, comment) {
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  const res = await apiFetch(
+    `/api/workspaces/${workspaceData.id}/sheets/${sheet.id}/patches`,
+    { method: 'POST', body: JSON.stringify({ patches: [{ row, col, comment: comment || '' }] }) }
+  );
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast(e.detail || '메모 저장 실패', 'error');
   }
 }
 
@@ -499,179 +673,7 @@ async function importWorkspace(input) {
   else { const e = await res.json(); showToast(e.detail || '업로드 실패', 'error'); }
 }
 
-// Keep-alive
-setInterval(() => {
-  if (ws && ws.readyState === WebSocket.OPEN)
-    ws.send(JSON.stringify({ type: 'ping' }));
-}, 25000);
-
-// ============================================================
-// ── 포맷 툴바 ─────────────────────────────────────────────────
-// ============================================================
-
-const COLOR_PALETTE = [
-  '000000','FFFFFF','FF0000','00FF00','0000FF','FFFF00','FF00FF','00FFFF',
-  'FF8000','8000FF','FF0080','00FF80','800000','008000','000080','808000',
-  '800080','008080','C0C0C0','808080','FF9999','99FF99','9999FF','FFFF99',
-  'FF99FF','99FFFF','FFCC99','CC99FF','FF99CC','99FFCC','FFCCCC','CCFFCC',
-  'CCCCFF','FFFFCC','FFCCFF','CCFFFF','E6E6E6','333333','666666','999999',
-];
-
-function initColorSwatches() {
-  ['color-swatches', 'bg-swatches'].forEach((id, idx) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    COLOR_PALETTE.forEach(hex => {
-      const sw = document.createElement('div');
-      sw.className = 'color-swatch';
-      sw.style.background = '#' + hex;
-      sw.title = '#' + hex;
-      sw.onclick = (e) => {
-        e.stopPropagation();
-        if (idx === 0) fmtColor(hex);
-        else fmtBg(hex);
-      };
-      el.appendChild(sw);
-    });
-  });
-}
-
-function toggleDropdown(id) {
-  event.stopPropagation();
-  const target = document.getElementById(id);
-  if (!target) return;
-  const wasOpen = target.classList.contains('open');
-  closeAllDropdowns();
-  if (!wasOpen) target.classList.add('open');
-}
-
-function closeAllDropdowns() {
-  document.querySelectorAll('.fmt-dropdown.open').forEach(d => d.classList.remove('open'));
-}
-
-function cssToStyleObj(css) {
-  const s = {};
-  if (!css) return s;
-  css.split(';').forEach(part => {
-    const [k, v] = part.split(':').map(x => x.trim());
-    if (!k || !v) return;
-    if (k === 'font-weight' && v === 'bold') s.bold = true;
-    if (k === 'font-style' && v === 'italic') s.italic = true;
-    if (k === 'text-decoration' && v === 'underline') s.underline = true;
-    if (k === 'color') s.color = v.replace('#','');
-    if (k === 'background-color') s.bg = v.replace('#','');
-    if (k === 'text-align') s.align = v;
-    if (k === 'white-space' && v === 'pre-wrap') s.wrap = true;
-  });
-  return s;
-}
-
-function styleObjToCss(s) {
-  const parts = [];
-  if (s.bold) parts.push('font-weight:bold');
-  if (s.italic) parts.push('font-style:italic');
-  if (s.underline) parts.push('text-decoration:underline');
-  if (s.fontSize) parts.push(`font-size:${s.fontSize}pt`);
-  if (s.color) parts.push(`color:#${s.color}`);
-  if (s.bg) parts.push(`background-color:#${s.bg}`);
-  if (s.align) parts.push(`text-align:${s.align}`);
-  if (s.valign) parts.push(`vertical-align:${s.valign}`);
-  if (s.wrap) parts.push('white-space:pre-wrap');
-  if (s.border) {
-    const wm = {thin:'1px', medium:'2px', thick:'3px', dashed:'1px', dotted:'1px'};
-    const sm = {thin:'solid', medium:'solid', thick:'solid', dashed:'dashed', dotted:'dotted'};
-    for (const [side, bd] of Object.entries(s.border)) {
-      const bs = bd.style || 'thin';
-      parts.push(`border-${side}:${wm[bs]||'1px'} ${sm[bs]||'solid'} #${bd.color||'000000'}`);
-    }
-  }
-  return parts.join(';');
-}
-
-function getSelectedCellStyle() {
-  if (!spreadsheet) return {};
-  try {
-    const cellName = colIndexToLetter(selX1) + (selY1 + 1);
-    const cssStr = spreadsheet.getStyle(cellName) || '';
-    return cssToStyleObj(cssStr);
-  } catch(e) { return {}; }
-}
-
-function updateToolbarState() {
-  if (!spreadsheet) return;
-  const s = getSelectedCellStyle();
-  setActive('fmt-bold', !!s.bold);
-  setActive('fmt-italic', !!s.italic);
-  setActive('fmt-underline', !!s.underline);
-  setActive('fmt-wrap', !!s.wrap);
-  setActive('fmt-align-left', s.align === 'left');
-  setActive('fmt-align-center', s.align === 'center');
-  setActive('fmt-align-right', s.align === 'right');
-  const colorBar = document.getElementById('fmt-color-bar');
-  if (colorBar) colorBar.style.background = s.color ? '#' + s.color : '#000000';
-  const bgBar = document.getElementById('fmt-bg-bar');
-  if (bgBar) bgBar.style.background = s.bg ? '#' + s.bg : 'transparent';
-}
-
-function setActive(id, active) {
-  const el = document.getElementById(id);
-  if (el) el.classList.toggle('active', active);
-}
-
-function applyStyleToSelection(styleProp, value) {
-  if (!spreadsheet) return;
-  const isEditable = !isClosed || IS_ADMIN;
-  if (!isEditable) return;
-  const sheet = sheets[currentSheetIndex];
-  if (!sheet) return;
-
-  const styleMap = {};
-  const patches = [];
-  for (let r = selY1; r <= selY2; r++) {
-    for (let c = selX1; c <= selX2; c++) {
-      const cellName = colIndexToLetter(c) + (r + 1);
-      const cssStr = spreadsheet.getStyle(cellName) || '';
-      const s = cssToStyleObj(cssStr);
-      if (value === null) delete s[styleProp];
-      else s[styleProp] = value;
-      const css = styleObjToCss(s);
-      styleMap[cellName] = css;
-      patches.push({ row: r, col: c, value: null, style: JSON.stringify(s) });
-    }
-  }
-  try { spreadsheet.setStyle(styleMap); } catch(e) {}
-  // 서버에 스타일 패치 전송 (값은 null — style 필드만)
-  if (patches.length > 0 && ws && ws.readyState === WebSocket.OPEN) {
-    sendBatchPatch(sheet.id, patches);
-  }
-  updateToolbarState();
-}
-
-function fmtBold() { const s = getSelectedCellStyle(); applyStyleToSelection('bold', s.bold ? null : true); }
-function fmtItalic() { const s = getSelectedCellStyle(); applyStyleToSelection('italic', s.italic ? null : true); }
-function fmtUnderline() { const s = getSelectedCellStyle(); applyStyleToSelection('underline', s.underline ? null : true); }
-function fmtColor(hex) { closeAllDropdowns(); applyStyleToSelection('color', hex); const b = document.getElementById('fmt-color-bar'); if (b) b.style.background = hex ? '#'+hex : '#000000'; }
-function fmtBg(hex) { closeAllDropdowns(); applyStyleToSelection('bg', hex); const b = document.getElementById('fmt-bg-bar'); if (b) b.style.background = hex ? '#'+hex : 'transparent'; }
-function fmtAlign(dir) { const s = getSelectedCellStyle(); applyStyleToSelection('align', s.align === dir ? null : dir); }
-function fmtWrap() { const s = getSelectedCellStyle(); applyStyleToSelection('wrap', s.wrap ? null : true); }
-
 // ── 병합 ──────────────────────────────────────────────────────
-function fmtMerge() {
-  if (!spreadsheet || !IS_ADMIN) return;
-  try {
-    spreadsheet.setMerge(selX1, selY1, selX2 - selX1 + 1, selY2 - selY1 + 1);
-    saveMerges();
-  } catch(e) { showToast('병합 실패: ' + e.message, 'error'); }
-}
-
-function fmtUnmerge() {
-  if (!spreadsheet || !IS_ADMIN) return;
-  try {
-    spreadsheet.removeMerge(selX1, selY1);
-    saveMerges();
-  } catch(e) { showToast('병합 해제 실패', 'error'); }
-}
-
 function handleMerge(el, x, y, colspan, rowspan) {
   setTimeout(saveMerges, 100);
 }
@@ -686,11 +688,11 @@ async function saveMerges() {
   for (const [cellName, dims] of Object.entries(mergeMap)) {
     const m = cellName.match(/^([A-Z]+)(\d+)$/);
     if (!m || !dims || dims.length < 2) continue;
-    const startCol = letterToColIndex(m[1]);
+    const startCol = SpreadsheetCore.letterToColIndex(m[1]);
     const startRow = parseInt(m[2]) - 1;
     const endCol = startCol + dims[0] - 1;
     const endRow = startRow + dims[1] - 1;
-    const endName = colIndexToLetter(endCol) + (endRow + 1);
+    const endName = SpreadsheetCore.colIndexToLetter(endCol) + (endRow + 1);
     if (cellName !== endName) mergesList.push(`${cellName}:${endName}`);
   }
   await apiFetch(
@@ -699,41 +701,8 @@ async function saveMerges() {
   );
 }
 
-// ── 테두리 ────────────────────────────────────────────────────
-function fmtBorder(preset) {
-  closeAllDropdowns();
-  if (!spreadsheet) return;
-  const isEditable = !isClosed || IS_ADMIN;
-  if (!isEditable) return;
-  const sheet = sheets[currentSheetIndex];
-  if (!sheet) return;
-  const thin = { style: 'thin', color: '000000' };
-  const styleMap = {};
-  const patches = [];
-  for (let r = selY1; r <= selY2; r++) {
-    for (let c = selX1; c <= selX2; c++) {
-      const cellName = colIndexToLetter(c) + (r + 1);
-      const cssStr = spreadsheet.getStyle(cellName) || '';
-      const s = cssToStyleObj(cssStr);
-      if (preset === 'none') { delete s.border; }
-      else if (preset === 'all') { s.border = { top: thin, bottom: thin, left: thin, right: thin }; }
-      else if (preset === 'outer') {
-        if (!s.border) s.border = {};
-        if (r === selY1) s.border.top = thin;
-        if (r === selY2) s.border.bottom = thin;
-        if (c === selX1) s.border.left = thin;
-        if (c === selX2) s.border.right = thin;
-      } else if (preset === 'bottom') {
-        if (!s.border) s.border = {};
-        s.border.bottom = thin;
-      }
-      const css = styleObjToCss(s);
-      styleMap[cellName] = css;
-      patches.push({ row: r, col: c, value: null, style: JSON.stringify(s) });
-    }
-  }
-  try { spreadsheet.setStyle(styleMap); } catch(e) {}
-  if (patches.length > 0 && ws && ws.readyState === WebSocket.OPEN) {
-    sendBatchPatch(sheet.id, patches);
-  }
-}
+// Keep-alive
+setInterval(() => {
+  if (ws && ws.readyState === WebSocket.OPEN)
+    ws.send(JSON.stringify({ type: 'ping' }));
+}, 25000);

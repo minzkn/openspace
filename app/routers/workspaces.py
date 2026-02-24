@@ -139,9 +139,10 @@ async def create_workspace(
             merges=sheet.merges,
             row_heights=sheet.row_heights,
             freeze_panes=sheet.freeze_panes,
+            conditional_formats=sheet.conditional_formats,
         )
         db.add(ws_sheet)
-        # 템플릿 셀 복사 (formula 우선, style 포함)
+        # 템플릿 셀 복사 (formula 우선, style/comment 포함)
         for cell in sheet.cells:
             db.add(WorkspaceCell(
                 id=str(uuid.uuid4()),
@@ -150,6 +151,7 @@ async def create_workspace(
                 col_index=cell.col_index,
                 value=cell.formula if cell.formula else cell.value,
                 style=cell.style,
+                comment=cell.comment,
             ))
 
     db.commit()
@@ -257,6 +259,54 @@ async def update_ws_sheet_merges(
     ws_sheet.merges = json.dumps(body.merges, ensure_ascii=False)
     db.commit()
     return {"message": "merges saved", "count": len(body.merges)}
+
+
+class FreezeUpdate(BaseModel):
+    freeze_panes: Optional[str] = None  # e.g. "C1" or null
+
+
+class ConditionalFormatsUpdate(BaseModel):
+    conditional_formats: Optional[str] = None  # JSON string of rules array
+
+
+@admin_router.patch("/{workspace_id}/sheets/{sheet_id}/freeze")
+async def update_ws_sheet_freeze(
+    workspace_id: str,
+    sheet_id: str,
+    body: FreezeUpdate,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    """워크스페이스 시트 틀 고정 설정"""
+    ws_sheet = db.query(WorkspaceSheet).filter(
+        WorkspaceSheet.id == sheet_id,
+        WorkspaceSheet.workspace_id == workspace_id,
+    ).first()
+    if not ws_sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    ws_sheet.freeze_panes = body.freeze_panes
+    db.commit()
+    return {"message": "freeze saved", "freeze_panes": body.freeze_panes}
+
+
+@admin_router.patch("/{workspace_id}/sheets/{sheet_id}/conditional-formats")
+async def update_ws_conditional_formats(
+    workspace_id: str,
+    sheet_id: str,
+    body: ConditionalFormatsUpdate,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    """워크스페이스 시트 조건부 서식 저장"""
+    ws_sheet = db.query(WorkspaceSheet).filter(
+        WorkspaceSheet.id == sheet_id,
+        WorkspaceSheet.workspace_id == workspace_id,
+    ).first()
+    if not ws_sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    ws_sheet.conditional_formats = body.conditional_formats
+    db.commit()
+    return {"message": "conditional formats saved"}
 
 
 @admin_router.post("/{workspace_id}/sheets", status_code=201)
@@ -479,11 +529,14 @@ async def export_workspace_xlsx(
         if ws_sheet.freeze_panes:
             excel_ws.freeze_panes = ws_sheet.freeze_panes
 
-        # 셀 데이터 + 스타일
+        # 셀 데이터 + 스타일 + 메모
         cells = db.query(WorkspaceCell).filter(WorkspaceCell.sheet_id == ws_sheet.id).all()
         for c in cells:
             excel_cell = excel_ws.cell(row=c.row_index + 1, column=c.col_index + 1, value=c.value)
             _apply_cell_style(excel_cell, c.style)
+            if c.comment:
+                from openpyxl.comments import Comment as XlComment
+                excel_cell.comment = XlComment(c.comment, "")
 
         # 병합 셀 복원
         if ws_sheet.merges:

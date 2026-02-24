@@ -85,6 +85,11 @@ async def ws_endpoint(websocket: WebSocket, workspace_id: str):
             elif msg_type == "batch_patch":
                 await _handle_batch_patch(websocket, workspace_id, msg, user, db, ws)
 
+            elif msg_type in ("row_insert", "row_delete"):
+                # Row operations are handled via REST API
+                # WebSocket only receives broadcasts
+                pass
+
             else:
                 await websocket.send_json({"type": "error", "message": f"Unknown type: {msg_type}"})
 
@@ -173,6 +178,14 @@ async def _handle_patch(websocket, workspace_id, msg, user, db, ws_obj):
         ))
     db.commit()
 
+    comment = msg.get("comment")  # 셀 메모 (선택)
+
+    # Save comment if provided
+    if comment is not None:
+        if existing:
+            existing.comment = comment if comment else None
+        # (for new cells, comment is included in WorkspaceCell creation above)
+
     broadcast_msg = {
         "type": "patch",
         "sheet_id": sheet_id,
@@ -180,6 +193,7 @@ async def _handle_patch(websocket, workspace_id, msg, user, db, ws_obj):
         "col": col,
         "value": value,
         "style": style,
+        "comment": comment,
         "updated_by": user.username,
     }
     await hub.broadcast(workspace_id, broadcast_msg, exclude=websocket)
@@ -219,6 +233,7 @@ async def _handle_batch_patch(websocket, workspace_id, msg, user, db, ws_obj):
         col = p.get("col")
         value = p.get("value")
         style = p.get("style")  # style JSON 문자열 (선택)
+        comment = p.get("comment")  # 셀 메모 (선택)
         if row is None or col is None:
             continue
         if not (0 <= row < MAX_ROWS):
@@ -238,6 +253,8 @@ async def _handle_batch_patch(websocket, workspace_id, msg, user, db, ws_obj):
                 existing.value = value
             if style is not None:
                 existing.style = style
+            if comment is not None:
+                existing.comment = comment if comment else None
             existing.updated_by = user.id
             existing.updated_at = _now()
         else:
@@ -248,6 +265,7 @@ async def _handle_batch_patch(websocket, workspace_id, msg, user, db, ws_obj):
                 col_index=col,
                 value=value,
                 style=style,
+                comment=comment if comment else None,
                 updated_by=user.id,
                 updated_at=_now(),
             ))
@@ -263,7 +281,7 @@ async def _handle_batch_patch(websocket, workspace_id, msg, user, db, ws_obj):
                 old_value=old_value,
                 new_value=value,
             ))
-        applied.append({"row": row, "col": col, "value": value, "style": style})
+        applied.append({"row": row, "col": col, "value": value, "style": style, "comment": comment})
 
     db.commit()
 

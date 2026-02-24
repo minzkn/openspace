@@ -102,6 +102,7 @@ class TemplateSheet(Base):
     merges = Column(Text)       # JSON list of xlsx range strings e.g. ["A1:B2", "C3:D4"]
     row_heights = Column(Text)  # JSON dict {row_index_str: height_pt} e.g. {"0": 30.0}
     freeze_panes = Column(Text) # xlsx freeze panes string e.g. "B2" (freeze col A)
+    conditional_formats = Column(Text)  # JSON array of conditional format rules
 
     __table_args__ = (UniqueConstraint("template_id", "sheet_index"),)
 
@@ -144,6 +145,7 @@ class TemplateCell(Base):
     value = Column(Text)
     formula = Column(Text)
     style = Column(Text)  # JSON
+    comment = Column(Text)  # cell note/comment
 
     __table_args__ = (
         UniqueConstraint("sheet_id", "row_index", "col_index"),
@@ -188,6 +190,7 @@ class WorkspaceSheet(Base):
     merges = Column(Text)       # JSON list of xlsx range strings e.g. ["A1:B2", "C3:D4"]
     row_heights = Column(Text)  # JSON dict {row_index_str: height_pt} e.g. {"0": 30.0}
     freeze_panes = Column(Text) # xlsx freeze panes string e.g. "B2" (freeze col A)
+    conditional_formats = Column(Text)  # JSON array of conditional format rules
 
     __table_args__ = (UniqueConstraint("workspace_id", "sheet_index"),)
 
@@ -205,6 +208,7 @@ class WorkspaceCell(Base):
     col_index = Column(Integer, nullable=False)
     value = Column(Text)
     style = Column(Text)  # JSON
+    comment = Column(Text)  # cell note/comment
     updated_by = Column(String, ForeignKey("users.id"))
     updated_at = Column(String, nullable=False, default=_now)
 

@@ -42,6 +42,8 @@ def apply_incremental_migrations(conn):
         "002_nullable_template_fk.sql",
         "003_sheet_meta.sql",
         "004_must_change_password.sql",
+        "005_cell_comments.sql",
+        "006_conditional_formats.sql",
     ]
     for fname in migrations:
         path = ROOT / "migrations" / fname

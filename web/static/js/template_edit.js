@@ -1,13 +1,6 @@
 /* ============================================================
-   template_edit.js
-   서식(Template) 전체 편집기
-   - 다중 시트 탭 (추가/삭제/이름변경)
-   - 컬럼 추가/삭제/속성 편집
-   - 계산식(=SUM 등) 지원 — Jspreadsheet CE 네이티브
-   - 셀 변경 시 자동 저장 (디바운스 800ms)
-   - 셀 스타일(굵기·색·정렬·테두리) 편집
-   - 셀 병합/해제
-   - 행 높이·열 너비·틀 고정 표시
+   template_edit.js — 서식(Template) 전체 편집기
+   SpreadsheetCore 공유 모듈 사용
 
    셀 번호 체계:
      col_index 0 → A열, 1 → B열, ...
@@ -25,35 +18,74 @@ let savePending = [];
 let saveTimer = null;
 const SAVE_DELAY = 800;
 
-// 현재 선택 범위 (onselection에서 업데이트)
+// 현재 선택 범위
 let selX1 = 0, selY1 = 0, selX2 = 0, selY2 = 0;
 
 // 수식 엔진
 if (typeof formula !== 'undefined') {
   jspreadsheet.setExtensions({ formula });
 }
+SpreadsheetCore.registerCustomFormulas();
 
-// ── 커스텀 수식 등록 ──────────────────────────────────────────
-(function registerCustomFormulas() {
-  var fm = (jspreadsheet && jspreadsheet.formula) || (typeof formula !== 'undefined' ? formula : null);
-  if (!fm || typeof fm.setFormula !== 'function') return;
-  var EPOCH = new Date(1899, 11, 30);
-  fm.setFormula({
-    TIME: function(h, m, s) { return (Number(h) * 3600 + Number(m) * 60 + Number(s)) / 86400; },
-    DATE: function(y, m, d) { var dt = new Date(Number(y), Number(m)-1, Number(d)); return Math.floor((dt-EPOCH)/86400000); },
-    TODAY: function() { var t = new Date(); t.setHours(0,0,0,0); return Math.floor((t-EPOCH)/86400000); },
-    NOW: function() { return (new Date()-EPOCH)/86400000; },
-    HOUR: function(t) { return Math.floor(((Number(t)%1+1)%1)*24); },
-    MINUTE: function(t) { return Math.floor(((Number(t)%1+1)%1)*24%1*60); },
-    SECOND: function(t) { return Math.round(((Number(t)%1+1)%1)*24%1*3600%60); },
-  });
-})();
+// ── SpreadsheetCore 컨텍스트 ────────────────────────────────
+const ctx = {
+  getSpreadsheet: () => spreadsheet,
+  getSelection: () => ({ x1: selX1, y1: selY1, x2: selX2, y2: selY2 }),
+  isEditable: () => true,
+  canMerge: () => true,
+  getCurrentSheet: () => sheets[currentSheetIndex],
+  onStyleChange: (styleMap) => { saveStyleBatch(styleMap); },
+  onMergeChange: () => { saveMerges(); },
+  onUndoRedoValue: (changes, isUndo) => {
+    // Undo/Redo 시 서버에 셀 값 저장
+    const batch = changes.map(c => ({
+      row_index: c.row,
+      col_index: c.col,
+      value: isUndo ? (c.oldVal || null) : (c.newVal || null),
+    }));
+    flushBatch(batch);
+  },
+  onDeleteCells: (changes) => {
+    const batch = changes.map(c => ({
+      row_index: c.row,
+      col_index: c.col,
+      value: null,
+    }));
+    flushBatch(batch);
+  },
+  onCommentChange: (row, col, comment) => { saveCommentTemplate(row, col, comment); },
+  undoManager: new SpreadsheetCore.UndoManager(),
+};
 
-function colIndexToLetter(idx) {
-  var letter = '', n = idx;
-  while (n >= 0) { letter = String.fromCharCode(65 + (n % 26)) + letter; n = Math.floor(n / 26) - 1; }
-  return letter;
+// ── 전역 함수 바인딩 (HTML onclick 호환) ────────────────────
+function colIndexToLetter(idx) { return SpreadsheetCore.colIndexToLetter(idx); }
+function letterToColIndex(l) { return SpreadsheetCore.letterToColIndex(l); }
+function toggleDropdown(id) { SpreadsheetCore.toggleDropdown(id); }
+function closeAllDropdowns() { SpreadsheetCore.closeAllDropdowns(); }
+function fmtBold() { SpreadsheetCore.fmtBold(ctx); }
+function fmtItalic() { SpreadsheetCore.fmtItalic(ctx); }
+function fmtUnderline() { SpreadsheetCore.fmtUnderline(ctx); }
+function fmtStrikethrough() { SpreadsheetCore.fmtStrikethrough(ctx); }
+function fmtColor(hex) { SpreadsheetCore.fmtColor(ctx, hex); }
+function fmtBg(hex) { SpreadsheetCore.fmtBg(ctx, hex); }
+function fmtAlign(dir) { SpreadsheetCore.fmtAlign(ctx, dir); }
+function fmtValign(dir) { SpreadsheetCore.fmtValign(ctx, dir); }
+function fmtWrap() { SpreadsheetCore.fmtWrap(ctx); }
+function fmtFontSize(size) { SpreadsheetCore.fmtFontSize(ctx, size); }
+function fmtNumFormat(fmt) { SpreadsheetCore.fmtNumFormat(ctx, fmt); }
+function fmtMerge() { SpreadsheetCore.fmtMerge(ctx); }
+function fmtUnmerge() { SpreadsheetCore.fmtUnmerge(ctx); }
+function fmtBorder(preset) { SpreadsheetCore.fmtBorder(ctx, preset); }
+function fmtBorderStyled(preset) {
+  const style = (document.getElementById('border-style-select') || {}).value || 'thin';
+  const color = (document.getElementById('border-color-val') || {}).value || '000000';
+  SpreadsheetCore.fmtBorder(ctx, preset, style, color);
 }
+function findNext() { SpreadsheetCore.findNext(ctx); }
+function findPrev() { SpreadsheetCore.findPrev(ctx); }
+function replaceCurrent() { SpreadsheetCore.replaceCurrent(ctx); }
+function replaceAll() { SpreadsheetCore.replaceAll(ctx); }
+function printSheet() { SpreadsheetCore.printSpreadsheet(); }
 
 // ── 초기화 ────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -61,12 +93,29 @@ document.addEventListener('DOMContentLoaded', () => {
   if (!dataEl) return;
   templateData = JSON.parse(dataEl.textContent);
   sheets = templateData.sheets || [];
-  initColorSwatches();
+  SpreadsheetCore.initColorSwatches(ctx);
+  SpreadsheetCore.registerShortcuts(ctx);
+  initFormulaBar();
   renderTabs();
   if (sheets.length > 0) loadSheet(0);
-  // 전역 클릭으로 드롭다운 닫기
-  document.addEventListener('click', closeAllDropdowns);
+  document.addEventListener('click', SpreadsheetCore.closeAllDropdowns);
 });
+
+function initFormulaBar() {
+  const input = document.getElementById('formula-input');
+  if (!input) return;
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      SpreadsheetCore.handleFormulaBarEnter(ctx, input);
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      SpreadsheetCore.updateFormulaBar(ctx);
+      input.blur();
+    }
+  });
+}
 
 // ── 시트 탭 렌더링 ────────────────────────────────────────────
 function renderTabs() {
@@ -78,7 +127,7 @@ function renderTabs() {
     tab.innerHTML =
       `<span ondblclick="renameSheet(${i})" title="더블클릭으로 이름 변경">${esc(s.sheet_name)}</span>` +
       (sheets.length > 1
-        ? `<span class="tab-del" onclick="deleteSheet(${i})" title="시트 삭제">×</span>`
+        ? `<span class="tab-del" onclick="deleteSheet(${i})" title="시트 삭제">\u00d7</span>`
         : '');
     tab.addEventListener('click', (e) => {
       if (e.target.classList.contains('tab-del')) return;
@@ -98,6 +147,7 @@ function switchSheet(index) {
   if (index === currentSheetIndex && spreadsheet) return;
   flushSave();
   currentSheetIndex = index;
+  ctx.undoManager.clear();
   renderTabs();
   loadSheet(index);
 }
@@ -135,10 +185,7 @@ async function loadSheet(index) {
     gridData.push(row);
   }
 
-  // 병합 셀 옵션
   const mergeCells = data.merges && Object.keys(data.merges).length > 0 ? data.merges : undefined;
-
-  // 틀 고정
   const freezeColumns = data.freeze_columns > 0 ? data.freeze_columns : undefined;
 
   container.innerHTML = '';
@@ -148,7 +195,7 @@ async function loadSheet(index) {
     minDimensions: [columns.length, numRows],
     tableOverflow: true,
     tableWidth: (container.offsetWidth || (window.innerWidth - 260)) + 'px',
-    tableHeight: (window.innerHeight - 300) + 'px',
+    tableHeight: (window.innerHeight - 360) + 'px',
     lazyLoading: true,
     loadingSpin: true,
     allowInsertColumn: false,
@@ -159,8 +206,10 @@ async function loadSheet(index) {
     freezeColumns,
     onchange: handleCellChange,
     onpaste: handlePaste,
+    onbeforechange: handleBeforeChange,
     onselection: handleSelection,
     onmerge: handleMerge,
+    contextMenu: SpreadsheetCore.buildContextMenu(ctx),
   });
 
   // 스타일 적용
@@ -176,6 +225,19 @@ async function loadSheet(index) {
   }
 
   attachHeaderClickListeners();
+
+  // 셀 메모 표시
+  if (data.comments && Object.keys(data.comments).length > 0) {
+    SpreadsheetCore.addCommentIndicators(ctx, data.comments);
+  }
+
+  // 조건부 서식 적용
+  if (data.conditional_formats && data.conditional_formats.length > 0) {
+    setTimeout(() => SpreadsheetCore.applyConditionalFormats(ctx, data.conditional_formats), 100);
+  }
+
+  // 자동 채우기 핸들 초기화
+  SpreadsheetCore.initAutofill(ctx);
 }
 
 function buildColumns(cols) {
@@ -217,7 +279,8 @@ function selectColumn(colIdx) {
 function handleSelection(el, x1, y1, x2, y2) {
   selX1 = x1; selY1 = y1; selX2 = x2; selY2 = y2;
   if (x1 === x2 && y1 === 0) selectColumn(x1);
-  updateToolbarState();
+  SpreadsheetCore.updateToolbarState(ctx);
+  if (ctx._positionAutofillHandle) ctx._positionAutofillHandle();
 }
 
 // ── 컬럼 패널 ─────────────────────────────────────────────────
@@ -365,24 +428,44 @@ async function deleteSheet(index) {
 }
 
 // ── 셀 변경 → 자동 저장 ──────────────────────────────────────
+function handleBeforeChange(instance, cell, x, y, value) {
+  try {
+    const oldVal = instance.getValueFromCoords(parseInt(x), parseInt(y)) || '';
+    cell._undoOldVal = oldVal;
+  } catch(e) {}
+  return value;
+}
+
 function handleCellChange(instance, cell, x, y, value) {
   let rawValue = value;
   try {
     const raw = instance.options.data[parseInt(y)][parseInt(x)];
     if (raw !== undefined) rawValue = raw;
   } catch(e) {}
+  // Undo support
+  const oldVal = cell._undoOldVal || '';
+  if (ctx.undoManager && oldVal !== rawValue) {
+    ctx.undoManager.push({ type: 'value', changes: [{ row: parseInt(y), col: parseInt(x), oldVal, newVal: rawValue }] });
+  }
   enqueueSave(parseInt(y), parseInt(x), rawValue);
 }
 
 function handlePaste(instance, data) {
+  const undoChanges = [];
   data.forEach(item => {
     let rawValue = item[3];
+    let oldVal = '';
     try {
       const raw = instance.options.data[item[0]][item[1]];
+      oldVal = instance.getValueFromCoords(item[1], item[0]) || '';
       if (raw !== undefined) rawValue = raw;
     } catch(e) {}
+    undoChanges.push({ row: item[0], col: item[1], oldVal, newVal: rawValue });
     enqueueSave(item[0], item[1], rawValue);
   });
+  if (undoChanges.length > 0 && ctx.undoManager) {
+    ctx.undoManager.push({ type: 'value', changes: undoChanges });
+  }
 }
 
 function enqueueSave(row, col, value) {
@@ -405,9 +488,19 @@ async function flushSave() {
     { method: 'POST', body: JSON.stringify(batch) }
   );
   hideSaveIndicator();
-  if (res.ok) setSaveStatus('저장됨 ✓');
-  else setSaveStatus('저장 실패 ✗');
+  if (res.ok) setSaveStatus('저장됨');
+  else setSaveStatus('저장 실패');
   setTimeout(() => setSaveStatus(''), 2000);
+}
+
+async function flushBatch(batch) {
+  if (!batch.length) return;
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  await apiFetch(
+    `/api/admin/templates/${templateData.id}/sheets/${sheet.id}/cells`,
+    { method: 'POST', body: JSON.stringify(batch) }
+  );
 }
 
 function setSaveStatus(msg) {
@@ -431,160 +524,17 @@ window.addEventListener('beforeunload', (e) => {
   }
 });
 
-// ============================================================
-// ── 포맷 툴바 ─────────────────────────────────────────────────
-// ============================================================
-
-// 색상 팔레트 (40색)
-const COLOR_PALETTE = [
-  '000000','FFFFFF','FF0000','00FF00','0000FF','FFFF00','FF00FF','00FFFF',
-  'FF8000','8000FF','FF0080','00FF80','800000','008000','000080','808000',
-  '800080','008080','C0C0C0','808080','FF9999','99FF99','9999FF','FFFF99',
-  'FF99FF','99FFFF','FFCC99','CC99FF','FF99CC','99FFCC','FFCCCC','CCFFCC',
-  'CCCCFF','FFFFCC','FFCCFF','CCFFFF','E6E6E6','333333','666666','999999',
-];
-
-function initColorSwatches() {
-  ['color-swatches', 'bg-swatches'].forEach((id, idx) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    COLOR_PALETTE.forEach(hex => {
-      const sw = document.createElement('div');
-      sw.className = 'color-swatch';
-      sw.style.background = '#' + hex;
-      sw.title = '#' + hex;
-      sw.onclick = (e) => {
-        e.stopPropagation();
-        if (idx === 0) fmtColor(hex);
-        else fmtBg(hex);
-      };
-      el.appendChild(sw);
-    });
-  });
-}
-
-function toggleDropdown(id) {
-  event.stopPropagation();
-  const target = document.getElementById(id);
-  if (!target) return;
-  const wasOpen = target.classList.contains('open');
-  closeAllDropdowns();
-  if (!wasOpen) target.classList.add('open');
-}
-
-function closeAllDropdowns() {
-  document.querySelectorAll('.fmt-dropdown.open').forEach(d => d.classList.remove('open'));
-}
-
-// 현재 선택된 셀의 스타일 JSON 읽기
-function getSelectedCellStyle() {
-  if (!spreadsheet) return {};
-  try {
-    const cellName = colIndexToLetter(selX1) + (selY1 + 1);
-    const cssStr = spreadsheet.getStyle(cellName) || '';
-    return cssToStyleObj(cssStr);
-  } catch(e) {
-    return {};
-  }
-}
-
-// CSS 문자열 → style dict (역변환, 단순)
-function cssToStyleObj(css) {
-  const s = {};
-  if (!css) return s;
-  css.split(';').forEach(part => {
-    const [k, v] = part.split(':').map(x => x.trim());
-    if (!k || !v) return;
-    if (k === 'font-weight' && v === 'bold') s.bold = true;
-    if (k === 'font-style' && v === 'italic') s.italic = true;
-    if (k === 'text-decoration' && v === 'underline') s.underline = true;
-    if (k === 'color') s.color = v.replace('#','');
-    if (k === 'background-color') s.bg = v.replace('#','');
-    if (k === 'text-align') s.align = v;
-    if (k === 'white-space' && v === 'pre-wrap') s.wrap = true;
-  });
-  return s;
-}
-
-// style dict → CSS string
-function styleObjToCss(s) {
-  const parts = [];
-  if (s.bold) parts.push('font-weight:bold');
-  if (s.italic) parts.push('font-style:italic');
-  if (s.underline) parts.push('text-decoration:underline');
-  if (s.fontSize) parts.push(`font-size:${s.fontSize}pt`);
-  if (s.color) parts.push(`color:#${s.color}`);
-  if (s.bg) parts.push(`background-color:#${s.bg}`);
-  if (s.align) parts.push(`text-align:${s.align}`);
-  if (s.valign) parts.push(`vertical-align:${s.valign}`);
-  if (s.wrap) parts.push('white-space:pre-wrap');
-  if (s.border) {
-    const wm = {thin:'1px', medium:'2px', thick:'3px', dashed:'1px', dotted:'1px'};
-    const sm = {thin:'solid', medium:'solid', thick:'solid', dashed:'dashed', dotted:'dotted'};
-    for (const [side, bd] of Object.entries(s.border)) {
-      const bs = bd.style || 'thin';
-      parts.push(`border-${side}:${wm[bs]||'1px'} ${sm[bs]||'solid'} #${bd.color||'000000'}`);
-    }
-  }
-  return parts.join(';');
-}
-
-// 툴바 버튼 상태 업데이트
-function updateToolbarState() {
-  if (!spreadsheet) return;
-  const s = getSelectedCellStyle();
-  setActive('fmt-bold', !!s.bold);
-  setActive('fmt-italic', !!s.italic);
-  setActive('fmt-underline', !!s.underline);
-  setActive('fmt-wrap', !!s.wrap);
-  setActive('fmt-align-left', s.align === 'left');
-  setActive('fmt-align-center', s.align === 'center');
-  setActive('fmt-align-right', s.align === 'right');
-  const colorBar = document.getElementById('fmt-color-bar');
-  if (colorBar) colorBar.style.background = s.color ? '#' + s.color : '#000000';
-  const bgBar = document.getElementById('fmt-bg-bar');
-  if (bgBar) bgBar.style.background = s.bg ? '#' + s.bg : 'transparent';
-}
-
-function setActive(id, active) {
-  const el = document.getElementById(id);
-  if (el) el.classList.toggle('active', active);
-}
-
-// 선택 범위 순회해 스타일 적용
-function applyStyleToSelection(styleProp, value) {
-  if (!spreadsheet) return;
-  const styleMap = {};
-  for (let r = selY1; r <= selY2; r++) {
-    for (let c = selX1; c <= selX2; c++) {
-      const cellName = colIndexToLetter(c) + (r + 1);
-      const cssStr = spreadsheet.getStyle(cellName) || '';
-      const s = cssToStyleObj(cssStr);
-      if (value === null) {
-        delete s[styleProp];
-      } else {
-        s[styleProp] = value;
-      }
-      styleMap[cellName] = styleObjToCss(s);
-    }
-  }
-  try { spreadsheet.setStyle(styleMap); } catch(e) {}
-  saveStyleBatch(styleMap);
-  updateToolbarState();
-}
-
-// 스타일을 서버에 저장
+// ── 스타일 서버 저장 ────────────────────────────────────────
 async function saveStyleBatch(styleMap) {
   const sheet = sheets[currentSheetIndex];
   if (!sheet) return;
-  // CSS → style JSON으로 변환해 batch_save_cells 형식으로 전송
   const batch = [];
   for (const [cellName, css] of Object.entries(styleMap)) {
     const m = cellName.match(/^([A-Z]+)(\d+)$/);
     if (!m) continue;
-    const col_index = letterToColIndex(m[1]);
+    const col_index = SpreadsheetCore.letterToColIndex(m[1]);
     const row_index = parseInt(m[2]) - 1;
-    const s = cssToStyleObj(css);
+    const s = SpreadsheetCore.cssToStyleObj(css);
     batch.push({ row_index, col_index, style: JSON.stringify(s) });
   }
   if (!batch.length) return;
@@ -594,67 +544,18 @@ async function saveStyleBatch(styleMap) {
   );
 }
 
-function letterToColIndex(letter) {
-  let result = 0;
-  for (let i = 0; i < letter.length; i++) {
-    result = result * 26 + (letter.charCodeAt(i) - 64);
-  }
-  return result - 1;
-}
-
-// ── 포맷 버튼 핸들러 ──────────────────────────────────────────
-function fmtBold() {
-  const s = getSelectedCellStyle();
-  applyStyleToSelection('bold', s.bold ? null : true);
-}
-function fmtItalic() {
-  const s = getSelectedCellStyle();
-  applyStyleToSelection('italic', s.italic ? null : true);
-}
-function fmtUnderline() {
-  const s = getSelectedCellStyle();
-  applyStyleToSelection('underline', s.underline ? null : true);
-}
-function fmtColor(hex) {
-  closeAllDropdowns();
-  applyStyleToSelection('color', hex);
-  const bar = document.getElementById('fmt-color-bar');
-  if (bar) bar.style.background = hex ? '#' + hex : '#000000';
-}
-function fmtBg(hex) {
-  closeAllDropdowns();
-  applyStyleToSelection('bg', hex);
-  const bar = document.getElementById('fmt-bg-bar');
-  if (bar) bar.style.background = hex ? '#' + hex : 'transparent';
-}
-function fmtAlign(dir) {
-  const s = getSelectedCellStyle();
-  applyStyleToSelection('align', s.align === dir ? null : dir);
-}
-function fmtWrap() {
-  const s = getSelectedCellStyle();
-  applyStyleToSelection('wrap', s.wrap ? null : true);
+// ── 셀 메모 저장 ─────────────────────────────────────────────
+async function saveCommentTemplate(row, col, comment) {
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  await apiFetch(
+    `/api/admin/templates/${templateData.id}/sheets/${sheet.id}/cells`,
+    { method: 'POST', body: JSON.stringify([{ row_index: row, col_index: col, comment: comment || '' }]) }
+  );
 }
 
 // ── 병합 핸들러 ───────────────────────────────────────────────
-function fmtMerge() {
-  if (!spreadsheet) return;
-  try {
-    spreadsheet.setMerge(selX1, selY1, selX2 - selX1 + 1, selY2 - selY1 + 1);
-    saveMerges();
-  } catch(e) { showToast('병합 실패: ' + e.message, 'error'); }
-}
-
-function fmtUnmerge() {
-  if (!spreadsheet) return;
-  try {
-    spreadsheet.removeMerge(selX1, selY1);
-    saveMerges();
-  } catch(e) { showToast('병합 해제 실패', 'error'); }
-}
-
 function handleMerge(el, x, y, colspan, rowspan) {
-  // onmerge 콜백: 병합 변경 후 서버 저장
   setTimeout(saveMerges, 100);
 }
 
@@ -662,57 +563,21 @@ async function saveMerges() {
   if (!spreadsheet) return;
   const sheet = sheets[currentSheetIndex];
   if (!sheet) return;
-  // jspreadsheet getMerge(null) → 전체 병합 맵 {A1: [colspan,rowspan], ...}
   let mergeMap = {};
   try { mergeMap = spreadsheet.getMerge() || {}; } catch(e) {}
-  // jspreadsheet 형식 → xlsx 범위 문자열 변환
   const mergesList = [];
   for (const [cellName, dims] of Object.entries(mergeMap)) {
     const m = cellName.match(/^([A-Z]+)(\d+)$/);
     if (!m || !dims || dims.length < 2) continue;
-    const startCol = letterToColIndex(m[1]);
+    const startCol = SpreadsheetCore.letterToColIndex(m[1]);
     const startRow = parseInt(m[2]) - 1;
     const endCol = startCol + dims[0] - 1;
     const endRow = startRow + dims[1] - 1;
-    const endName = colIndexToLetter(endCol) + (endRow + 1);
-    if (cellName !== endName) {
-      mergesList.push(`${cellName}:${endName}`);
-    }
+    const endName = SpreadsheetCore.colIndexToLetter(endCol) + (endRow + 1);
+    if (cellName !== endName) mergesList.push(`${cellName}:${endName}`);
   }
   await apiFetch(
     `/api/admin/templates/${templateData.id}/sheets/${sheet.id}/merges`,
     { method: 'PATCH', body: JSON.stringify({ merges: mergesList }) }
   );
-}
-
-// ── 테두리 프리셋 ─────────────────────────────────────────────
-function fmtBorder(preset) {
-  closeAllDropdowns();
-  if (!spreadsheet) return;
-  const thin = { style: 'thin', color: '000000' };
-  const styleMap = {};
-  for (let r = selY1; r <= selY2; r++) {
-    for (let c = selX1; c <= selX2; c++) {
-      const cellName = colIndexToLetter(c) + (r + 1);
-      const cssStr = spreadsheet.getStyle(cellName) || '';
-      const s = cssToStyleObj(cssStr);
-      if (preset === 'none') {
-        delete s.border;
-      } else if (preset === 'all') {
-        s.border = { top: thin, bottom: thin, left: thin, right: thin };
-      } else if (preset === 'outer') {
-        if (!s.border) s.border = {};
-        if (r === selY1) s.border.top = thin;
-        if (r === selY2) s.border.bottom = thin;
-        if (c === selX1) s.border.left = thin;
-        if (c === selX2) s.border.right = thin;
-      } else if (preset === 'bottom') {
-        if (!s.border) s.border = {};
-        s.border.bottom = thin;
-      }
-      styleMap[cellName] = styleObjToCss(s);
-    }
-  }
-  try { spreadsheet.setStyle(styleMap); } catch(e) {}
-  saveStyleBatch(styleMap);
 }

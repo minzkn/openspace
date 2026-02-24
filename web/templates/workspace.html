@@ -15,6 +15,7 @@
     <span id="ws-activity" class="ws-activity"></span>
   </div>
   <div class="workspace-actions">
+    <button class="btn btn-sm btn-secondary" onclick="printSheet()" title="인쇄">인쇄</button>
     <button class="btn btn-sm btn-secondary" onclick="exportWorkspace()">다운로드</button>
     {% if is_admin %}
     <label class="btn btn-sm btn-secondary">
@@ -36,11 +37,20 @@
   {% endif %}
 </div>
 
-<!-- 포맷 툴바 (관리자 및 편집 가능 상태에서 표시) -->
+<!-- 포맷 툴바 -->
 <div class="format-toolbar" id="format-toolbar" style="display:none">
-  <button class="fmt-btn" id="fmt-bold" title="굵게" onclick="fmtBold()"><b>B</b></button>
-  <button class="fmt-btn" id="fmt-italic" title="기울임" onclick="fmtItalic()"><i>I</i></button>
-  <button class="fmt-btn" id="fmt-underline" title="밑줄" onclick="fmtUnderline()"><u>U</u></button>
+  <!-- 글꼴 크기 -->
+  <select class="fmt-select" id="fmt-font-size" title="글꼴 크기" onchange="fmtFontSize(this.value)">
+    <option value="8">8</option><option value="9">9</option><option value="10">10</option>
+    <option value="11" selected>11</option><option value="12">12</option><option value="14">14</option>
+    <option value="16">16</option><option value="18">18</option><option value="20">20</option>
+    <option value="24">24</option><option value="36">36</option>
+  </select>
+  <div class="fmt-sep"></div>
+  <button class="fmt-btn" id="fmt-bold" title="굵게 (Ctrl+B)" onclick="fmtBold()"><b>B</b></button>
+  <button class="fmt-btn" id="fmt-italic" title="기울임 (Ctrl+I)" onclick="fmtItalic()"><i>I</i></button>
+  <button class="fmt-btn" id="fmt-underline" title="밑줄 (Ctrl+U)" onclick="fmtUnderline()"><u>U</u></button>
+  <button class="fmt-btn" id="fmt-strikethrough" title="취소선" onclick="fmtStrikethrough()"><s>S</s></button>
   <div class="fmt-sep"></div>
   <button class="fmt-btn" id="fmt-color" title="글자색" onclick="toggleDropdown('color-drop')" style="position:relative">
     A<span class="color-bar" id="fmt-color-bar" style="background:#000000"></span>
@@ -50,37 +60,94 @@
     </div>
   </button>
   <button class="fmt-btn" id="fmt-bg" title="배경색" onclick="toggleDropdown('bg-drop')" style="position:relative">
-    🎨<span class="color-bar" id="fmt-bg-bar" style="background:transparent;border:1px solid #ccc"></span>
+    <span style="font-size:15px">&#x1f3a8;</span><span class="color-bar" id="fmt-bg-bar" style="background:transparent;border:1px solid #ccc"></span>
     <div class="fmt-dropdown" id="bg-drop">
       <div class="color-swatches" id="bg-swatches"></div>
       <div class="fmt-dropdown-item" onclick="fmtBg(null)">없음 (배경 제거)</div>
     </div>
   </button>
   <div class="fmt-sep"></div>
-  <button class="fmt-btn" id="fmt-align-left" title="왼쪽 정렬" onclick="fmtAlign('left')">⬅</button>
-  <button class="fmt-btn" id="fmt-align-center" title="가운데 정렬" onclick="fmtAlign('center')">≡</button>
-  <button class="fmt-btn" id="fmt-align-right" title="오른쪽 정렬" onclick="fmtAlign('right')">➡</button>
+  <button class="fmt-btn" id="fmt-align-left" title="왼쪽 정렬" onclick="fmtAlign('left')">&#x2b05;</button>
+  <button class="fmt-btn" id="fmt-align-center" title="가운데 정렬" onclick="fmtAlign('center')">&#x2261;</button>
+  <button class="fmt-btn" id="fmt-align-right" title="오른쪽 정렬" onclick="fmtAlign('right')">&#x27a1;</button>
   <div class="fmt-sep"></div>
-  <button class="fmt-btn" id="fmt-wrap" title="줄바꿈" onclick="fmtWrap()">↵</button>
+  <button class="fmt-btn" id="fmt-valign-top" title="위쪽 정렬" onclick="fmtValign('top')">&#x2191;</button>
+  <button class="fmt-btn" id="fmt-valign-middle" title="가운데 정렬" onclick="fmtValign('middle')">&#x2195;</button>
+  <button class="fmt-btn" id="fmt-valign-bottom" title="아래쪽 정렬" onclick="fmtValign('bottom')">&#x2193;</button>
   <div class="fmt-sep"></div>
-  <button class="fmt-btn" title="셀 병합" onclick="fmtMerge()">⊞</button>
-  <button class="fmt-btn" title="병합 해제" onclick="fmtUnmerge()">⊟</button>
+  <button class="fmt-btn" id="fmt-wrap" title="줄바꿈" onclick="fmtWrap()">&#x21b5;</button>
+  <div class="fmt-sep"></div>
+  <!-- 숫자 서식 -->
+  <select class="fmt-select" id="fmt-num-format" title="숫자 서식" onchange="fmtNumFormat(this.value)">
+    <option value="">일반</option>
+    <option value="#,##0">숫자 (#,##0)</option>
+    <option value="#,##0.00">소수점 (#,##0.00)</option>
+    <option value="0.00%">백분율 (0.00%)</option>
+    <option value="&#x20A9;#,##0">통화 (&#x20A9;)</option>
+    <option value="yyyy-mm-dd">날짜</option>
+    <option value="yyyy-mm-dd hh:mm">날짜/시간</option>
+  </select>
+  <div class="fmt-sep"></div>
+  <button class="fmt-btn" title="셀 병합" onclick="fmtMerge()">&#x229e;</button>
+  <button class="fmt-btn" title="병합 해제" onclick="fmtUnmerge()">&#x229f;</button>
   <div class="fmt-sep"></div>
   <button class="fmt-btn" title="테두리" onclick="toggleDropdown('border-drop')" style="position:relative">
-    ⊡
-    <div class="fmt-dropdown" id="border-drop">
-      <div class="fmt-dropdown-item" onclick="fmtBorder('all')">모든 테두리</div>
-      <div class="fmt-dropdown-item" onclick="fmtBorder('outer')">바깥 테두리</div>
+    &#x22a1;
+    <div class="fmt-dropdown" id="border-drop" style="min-width:180px">
+      <div class="fmt-dropdown-item" onclick="fmtBorderStyled('all')">모든 테두리</div>
+      <div class="fmt-dropdown-item" onclick="fmtBorderStyled('outer')">바깥 테두리</div>
+      <div class="fmt-dropdown-item" onclick="fmtBorderStyled('bottom')">아래쪽</div>
+      <div class="fmt-dropdown-item" onclick="fmtBorderStyled('top')">위쪽</div>
+      <div class="fmt-dropdown-item" onclick="fmtBorderStyled('left')">왼쪽</div>
+      <div class="fmt-dropdown-item" onclick="fmtBorderStyled('right')">오른쪽</div>
       <div class="fmt-dropdown-item" onclick="fmtBorder('none')">테두리 없음</div>
-      <div class="fmt-dropdown-item" onclick="fmtBorder('bottom')">아래쪽만</div>
+      <div class="fmt-dropdown-sep"></div>
+      <div style="padding:4px 8px;display:flex;gap:6px;align-items:center;font-size:12px">
+        <label>스타일</label>
+        <select id="border-style-select" style="font-size:11px;padding:2px">
+          <option value="thin">얇게</option>
+          <option value="medium">중간</option>
+          <option value="thick">두껍게</option>
+          <option value="dashed">점선</option>
+          <option value="dotted">점</option>
+        </select>
+        <input type="hidden" id="border-color-val" value="000000">
+      </div>
     </div>
   </button>
+</div>
+
+<!-- 수식 입력줄 -->
+<div class="formula-bar" id="formula-bar" style="display:none">
+  <div class="formula-cell-ref" id="formula-cell-ref">A1</div>
+  <div class="formula-fx">fx</div>
+  <input type="text" class="formula-input" id="formula-input" placeholder="셀 값 또는 수식 입력">
+</div>
+
+<!-- 찾기/바꾸기 패널 -->
+<div class="find-panel" id="find-panel">
+  <div class="find-row">
+    <input type="text" id="find-input" placeholder="찾기..." class="find-input" onkeydown="if(event.key==='Enter'){findNext();event.preventDefault()}">
+    <button class="btn btn-sm btn-ghost" onclick="findPrev()" title="이전">&#x25b2;</button>
+    <button class="btn btn-sm btn-ghost" onclick="findNext()" title="다음">&#x25bc;</button>
+    <span id="find-count" class="find-count">결과 없음</span>
+    <label class="find-option"><input type="checkbox" id="find-case"> 대소문자</label>
+    <button class="btn btn-sm btn-ghost" onclick="SpreadsheetCore.closeFindPanel()" title="닫기">&#x2715;</button>
+  </div>
+  <div class="find-row" id="find-replace-row" style="display:none">
+    <input type="text" id="replace-input" placeholder="바꾸기..." class="find-input">
+    <button class="btn btn-sm btn-ghost" onclick="replaceCurrent()">바꾸기</button>
+    <button class="btn btn-sm btn-ghost" onclick="replaceAll()">모두 바꾸기</button>
+  </div>
 </div>
 
 <!-- 스프레드시트 컨테이너 -->
 <div id="spreadsheet-container">
   <div id="spreadsheet"></div>
 </div>
+
+<!-- 상태 표시줄 -->
+<div class="status-bar" id="status-bar"></div>
 
 <!-- CLOSED 오버레이 -->
 {% if workspace.status == 'CLOSED' and not is_admin %}
@@ -89,7 +156,6 @@
 </div>
 {% endif %}
 
-<!-- workspace 데이터 -->
 <!-- 시트 이름변경 모달 -->
 <template id="rename-ws-sheet-tpl">
   <form onsubmit="submitRenameWsSheet(event)" style="display:flex;flex-direction:column;gap:12px">
@@ -115,5 +181,6 @@
   const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
   const CURRENT_USER = {{ current_user.username | tojson }};
 </script>
+<script src="/static/js/spreadsheet_core.js"></script>
 <script src="/static/js/workspace.js"></script>
 {% endblock %}

@@ -64,6 +64,7 @@ class CellBatchItem(BaseModel):
     col_index: int
     value: Optional[str] = None
     style: Optional[str] = None
+    comment: Optional[str] = None
 
 
 class MergesUpdate(BaseModel):
@@ -84,6 +85,8 @@ def _extract_cell_style(cell) -> Optional[str]:
             style['italic'] = True
         if font.underline and font.underline != 'none':
             style['underline'] = True
+        if font.strikethrough:
+            style['strikethrough'] = True
         if font.size and font.size != 11:
             style['fontSize'] = font.size
         try:
@@ -164,6 +167,8 @@ def _apply_cell_style(ws_cell, style_json: Optional[str]) -> None:
         font_kwargs['italic'] = True
     if style.get('underline'):
         font_kwargs['underline'] = 'single'
+    if style.get('strikethrough'):
+        font_kwargs['strike'] = True
     if style.get('fontSize'):
         font_kwargs['size'] = style['fontSize']
     if style.get('color'):
@@ -206,8 +211,13 @@ def _style_to_css(style: dict) -> str:
         parts.append('font-weight:bold')
     if style.get('italic'):
         parts.append('font-style:italic')
+    decorations = []
     if style.get('underline'):
-        parts.append('text-decoration:underline')
+        decorations.append('underline')
+    if style.get('strikethrough'):
+        decorations.append('line-through')
+    if decorations:
+        parts.append('text-decoration:' + ' '.join(decorations))
     if style.get('fontSize'):
         parts.append(f"font-size:{style['fontSize']}pt")
     if style.get('color'):
@@ -395,6 +405,7 @@ async def copy_template(
             sheet_index=sheet.sheet_index, sheet_name=sheet.sheet_name,
             merges=sheet.merges, row_heights=sheet.row_heights,
             freeze_panes=sheet.freeze_panes,
+            conditional_formats=sheet.conditional_formats,
         )
         db.add(new_sheet)
         for col in sheet.columns:
@@ -405,7 +416,8 @@ async def copy_template(
         for cell in sheet.cells:
             db.add(TemplateCell(id=str(uuid.uuid4()), sheet_id=new_sheet.id,
                                 row_index=cell.row_index, col_index=cell.col_index,
-                                value=cell.value, formula=cell.formula, style=cell.style))
+                                value=cell.value, formula=cell.formula, style=cell.style,
+                                comment=cell.comment))
     db.commit()
     db.refresh(new_t)
     return {"data": _template_summary(new_t), "message": "copied"}
@@ -476,6 +488,21 @@ async def get_template_sheet_snapshot(
     # 틀 고정 열 수
     freeze_columns = _freeze_to_cols(sheet.freeze_panes)
 
+    # 셀 메모
+    comments: dict = {}
+    for c in cells:
+        if c.comment and c.row_index < num_rows and c.col_index < num_cols:
+            cell_name = f"{get_column_letter(c.col_index + 1)}{c.row_index + 1}"
+            comments[cell_name] = c.comment
+
+    # 조건부 서식
+    conditional_formats = []
+    if sheet.conditional_formats:
+        try:
+            conditional_formats = json.loads(sheet.conditional_formats)
+        except Exception:
+            pass
+
     return {
         "data": {
             "cells": grid,
@@ -485,6 +512,8 @@ async def get_template_sheet_snapshot(
             "row_heights": row_heights_px,
             "freeze_columns": freeze_columns,
             "styles": styles,
+            "comments": comments,
+            "conditional_formats": conditional_formats,
         }
     }
 
@@ -554,6 +583,53 @@ async def update_sheet_merges(
     sheet.merges = json.dumps(body.merges, ensure_ascii=False)
     db.commit()
     return {"message": "merges saved", "count": len(body.merges)}
+
+
+class FreezeUpdate(BaseModel):
+    freeze_panes: Optional[str] = None
+
+
+@router.patch("/{template_id}/sheets/{sheet_id}/freeze")
+async def update_sheet_freeze(
+    template_id: str,
+    sheet_id: str,
+    body: FreezeUpdate,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    """서식 시트 틀 고정 설정"""
+    sheet = db.query(TemplateSheet).filter(
+        TemplateSheet.id == sheet_id,
+        TemplateSheet.template_id == template_id,
+    ).first()
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    sheet.freeze_panes = body.freeze_panes
+    db.commit()
+    return {"message": "freeze saved", "freeze_panes": body.freeze_panes}
+
+
+class ConditionalFormatsUpdate(BaseModel):
+    conditional_formats: Optional[str] = None  # JSON string of rules array
+
+
+@router.patch("/{template_id}/sheets/{sheet_id}/conditional-formats")
+async def update_sheet_conditional_formats(
+    template_id: str,
+    sheet_id: str,
+    body: ConditionalFormatsUpdate,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    sheet = db.query(TemplateSheet).filter(
+        TemplateSheet.id == sheet_id,
+        TemplateSheet.template_id == template_id,
+    ).first()
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    sheet.conditional_formats = body.conditional_formats
+    db.commit()
+    return {"message": "conditional formats saved"}
 
 
 @router.delete("/{template_id}/sheets/{sheet_id}", status_code=204)
@@ -711,6 +787,8 @@ async def batch_save_cells(
             existing.formula = formula
             if item.style is not None:
                 existing.style = item.style
+            if item.comment is not None:
+                existing.comment = item.comment if item.comment else None
         else:
             db.add(TemplateCell(
                 id=str(uuid.uuid4()),
@@ -720,6 +798,7 @@ async def batch_save_cells(
                 value=value,
                 formula=formula,
                 style=item.style,
+                comment=item.comment if item.comment else None,
             ))
     t = db.query(Template).filter(Template.id == template_id).first()
     if t:
@@ -807,17 +886,19 @@ async def import_template_xlsx(
             for ci in range(num_cols):
                 cell = row[ci] if ci < len(row) else None
                 if cell is None or cell.value is None:
-                    # 값 없어도 스타일 있으면 저장
+                    # 값 없어도 스타일이나 메모 있으면 저장
                     style_json = _extract_cell_style(cell) if cell else None
-                    if style_json:
+                    comment_text = cell.comment.text.strip() if cell and cell.comment else None
+                    if style_json or comment_text:
                         db.add(TemplateCell(
                             id=str(uuid.uuid4()), sheet_id=new_sheet.id,
                             row_index=ri, col_index=ci,
-                            value=None, style=style_json,
+                            value=None, style=style_json, comment=comment_text,
                         ))
                     continue
                 raw = cell.value
                 style_json = _extract_cell_style(cell)
+                comment_text = cell.comment.text.strip() if cell.comment else None
                 if cell.data_type == 'f' or (isinstance(raw, str) and raw.startswith("=")):
                     raw_str = str(raw)
                     formula_str = raw_str if raw_str.startswith("=") else "=" + raw_str
@@ -825,12 +906,14 @@ async def import_template_xlsx(
                         id=str(uuid.uuid4()), sheet_id=new_sheet.id,
                         row_index=ri, col_index=ci,
                         value=None, formula=formula_str, style=style_json,
+                        comment=comment_text,
                     ))
                 else:
                     db.add(TemplateCell(
                         id=str(uuid.uuid4()), sheet_id=new_sheet.id,
                         row_index=ri, col_index=ci,
                         value=str(raw), style=style_json,
+                        comment=comment_text,
                     ))
 
     db.commit()
@@ -881,6 +964,9 @@ async def export_template_xlsx(
                     ws_cell = ws.cell(row=ri + 1, column=ci + 1,
                                       value=c.formula if c.formula else c.value)
                     _apply_cell_style(ws_cell, c.style)
+                    if c.comment:
+                        from openpyxl.comments import Comment as XlComment
+                        ws_cell.comment = XlComment(c.comment, "")
 
         # 병합 셀 복원
         if sheet.merges:

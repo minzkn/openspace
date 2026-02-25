@@ -4,6 +4,7 @@ import io
 import json
 import re
 import uuid
+import zipfile
 import xml.etree.ElementTree as _ET
 from datetime import datetime as _datetime, date as _date, time as _time, timedelta as _td
 from typing import Optional
@@ -74,6 +75,42 @@ class CellBatchItem(BaseModel):
 
 class MergesUpdate(BaseModel):
     merges: list[str]   # list of xlsx range strings e.g. ["A1:B2", "C3:D4"]
+
+
+# ── xlsx sanitiser ───────────────────────────────────────────
+_OXML_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+
+def _sanitize_xlsx(raw: bytes) -> bytes:
+    """규격 위반 xlsx 수정 (font family > 14 등). 수정 필요 없으면 원본 반환."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zin:
+            if "xl/styles.xml" not in zin.namelist():
+                return raw
+            styles_xml = zin.read("xl/styles.xml")
+    except zipfile.BadZipFile:
+        return raw
+
+    root = _ET.fromstring(styles_xml)
+    fonts_el = root.find(f"{_OXML_NS}fonts")
+    need_fix = False
+    if fonts_el is not None:
+        for font_el in fonts_el:
+            fam = font_el.find(f"{_OXML_NS}family")
+            if fam is not None:
+                v = int(fam.get("val", "0"))
+                if v > 14:
+                    fam.set("val", "2")  # 2 = Swiss (sans-serif)
+                    need_fix = True
+
+    if not need_fix:
+        return raw
+
+    new_styles = _ET.tostring(root, xml_declaration=True, encoding="UTF-8")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(raw)) as zin, zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.namelist():
+            zout.writestr(item, new_styles if item == "xl/styles.xml" else zin.read(item))
+    return buf.getvalue()
 
 
 # ── Theme & color helpers ────────────────────────────────────
@@ -1051,6 +1088,7 @@ async def import_template_xlsx(
         raise HTTPException(status_code=400, detail="Invalid xlsx file")
 
     # data_only=False → 계산식 원본 보존
+    content = _sanitize_xlsx(content)
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
     except Exception as e:

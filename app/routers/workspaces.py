@@ -24,6 +24,7 @@ from .templates import (
     _extract_cell_style, _apply_cell_style, _style_to_css,
     _range_to_jss, _freeze_to_cols, _pt_to_px,
     _get_theme_colors, _stringify_value, _parse_value_for_excel,
+    _sanitize_xlsx,
 )
 
 router = APIRouter(tags=["workspaces"])
@@ -490,6 +491,7 @@ async def import_workspace_xlsx(
     if content[:4] != b"PK\x03\x04":
         raise HTTPException(status_code=400, detail="Invalid xlsx file")
 
+    content = _sanitize_xlsx(content)
     wb = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
     theme_colors = _get_theme_colors(wb)
     ws_sheets = sorted(ws.sheets, key=lambda s: s.sheet_index)

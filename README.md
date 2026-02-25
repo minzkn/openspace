@@ -39,6 +39,7 @@
 | 숫자 서식 (numFmt) | ✅ | 저장 및 export 지원 |
 | 틀 고정 (열) | ✅ | jspreadsheet CE `freezeColumns` |
 | 틀 고정 (행) | ❌ | jspreadsheet CE 미지원 |
+| 규격 위반 xlsx 자동 수정 | ✅ | font family > 14 등 openpyxl 호환성 자동 보정 |
 | 조건부 서식·차트·이미지·Named Range | ❌ | jspreadsheet CE 범위 외 |
 
 ### 협업 및 관리

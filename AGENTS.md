@@ -502,9 +502,10 @@ Referrer-Policy: strict-origin-when-cross-origin
 ```
 1. multipart/form-data로 .xlsx 파일 수신
 2. 매직 바이트 검증 (PK\x03\x04)
-3. openpyxl.load_workbook() 로드
-4. 시트 수 ≤ 64 검증
-5. _get_theme_colors(wb) → 테마 색상 팔레트 추출
+3. _sanitize_xlsx(content) → 규격 위반 수정 (font family > 14 등)
+4. openpyxl.load_workbook() 로드
+5. 시트 수 ≤ 64 검증
+6. _get_theme_colors(wb) → 테마 색상 팔레트 추출
 6. 각 시트:
    a. template_sheets INSERT (merges, row_heights, freeze_panes 포함)
    b. 컬럼 헤더 = Excel 열 문자(A,B,C...) → template_columns INSERT
@@ -512,7 +513,7 @@ Referrer-Policy: strict-origin-when-cross-origin
       - _extract_cell_style(cell, theme_colors) → 스타일 JSON 추출
       - _stringify_value(raw) → 값 문자열화 (datetime→ISO, bool→TRUE/FALSE)
    d. row_index=0 부터 시작 (헤더 행 건너뜀 없음)
-7. 트랜잭션 커밋
+8. 트랜잭션 커밋
 ```
 
 #### 다운로드 (DB → .xlsx)
@@ -537,6 +538,7 @@ Referrer-Policy: strict-origin-when-cross-origin
 
 | 함수 | 설명 |
 |------|------|
+| `_sanitize_xlsx(raw)` | 규격 위반 xlsx 수정 (font family > 14 → 2로 클램핑 등) |
 | `_get_theme_colors(wb)` | 워크북 XML에서 테마 색상 팔레트(dk1/lt1/dk2/lt2/accent1-6) 추출 |
 | `_apply_tint(rgb_hex, tint)` | Excel tint(-1.0~1.0) 적용: 음수=어둡게, 양수=밝게 |
 | `_resolve_color(color_obj, theme_colors)` | openpyxl Color → 6자리 RGB hex (rgb/theme/indexed 타입 지원) |
@@ -562,7 +564,7 @@ Referrer-Policy: strict-origin-when-cross-origin
 ### 7.3 Workspace Excel 업로드 (관리자)
 
 - OPEN/CLOSED 상태 불문 관리자는 업로드 가능
-- `_get_theme_colors(wb)` → 테마 색상 추출 후 스타일/값 처리
+- `_sanitize_xlsx()` → 규격 위반 수정 후 `_get_theme_colors(wb)` → 테마 색상 추출
 - 업로드된 xlsx → workspace_cells 전체 덮어쓰기 (트랜잭션)
 - merges, row_heights, freeze_panes 시트 메타도 갱신
 - WebSocket으로 모든 접속 클라이언트에 `reload` 이벤트 브로드캐스트

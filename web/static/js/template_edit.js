@@ -509,27 +509,38 @@ function renameSheet(index) {
   showModalFromTemplate('시트 이름 변경', 'rename-sheet-tpl');
   setTimeout(() => {
     const inp = document.getElementById('f-sheet-name');
-    if (inp) { inp.value = sheets[index].sheet_name; inp.focus(); inp.select(); }
+    if (inp) {
+      inp.value = sheets[index].sheet_name;
+      inp.focus();
+      inp.select();
+      const form = inp.closest('form');
+      if (form) form.onsubmit = submitRenameSheet;
+    }
   }, 50);
 }
 
 async function submitRenameSheet(e) {
   e.preventDefault();
-  const newName = document.getElementById('f-sheet-name').value.trim();
-  if (!newName) return;
-  const sheet = sheets[renamingSheetIndex];
-  const res = await apiFetch(
-    `/api/admin/templates/${templateData.id}/sheets/${sheet.id}`,
-    { method: 'PATCH', body: JSON.stringify({ sheet_name: newName }) }
-  );
-  if (res.ok) {
-    sheet.sheet_name = newName;
-    closeModal();
-    renderTabs();
-    showToast('이름이 변경되었습니다', 'success');
-  } else {
-    const e2 = await res.json();
-    showToast(e2.detail || '변경 실패', 'error');
+  try {
+    const newName = document.getElementById('f-sheet-name').value.trim();
+    if (!newName) return;
+    const sheet = sheets[renamingSheetIndex];
+    if (!sheet) { showToast('시트를 찾을 수 없습니다', 'error'); return; }
+    const res = await apiFetch(
+      `/api/admin/templates/${templateData.id}/sheets/${sheet.id}`,
+      { method: 'PATCH', body: JSON.stringify({ sheet_name: newName }) }
+    );
+    if (res.ok) {
+      sheet.sheet_name = newName;
+      closeModal();
+      renderTabs();
+      showToast('이름이 변경되었습니다', 'success');
+    } else {
+      const e2 = await res.json().catch(() => ({}));
+      showToast(e2.detail || '변경 실패', 'error');
+    }
+  } catch (err) {
+    showToast('시트 이름 변경 실패: ' + err.message, 'error');
   }
 }
 

@@ -873,27 +873,39 @@ function renameWsSheet(index) {
   showModalFromTemplate('시트 이름 변경', 'rename-ws-sheet-tpl');
   setTimeout(() => {
     const inp = document.getElementById('f-ws-sheet-name');
-    if (inp) { inp.value = sheets[index].sheet_name; inp.focus(); inp.select(); }
+    if (inp) {
+      inp.value = sheets[index].sheet_name;
+      inp.focus();
+      inp.select();
+      // 프로그래밍 방식으로 submit 핸들러 연결 (inline onsubmit 백업)
+      const form = inp.closest('form');
+      if (form) form.onsubmit = submitRenameWsSheet;
+    }
   }, 50);
 }
 
 async function submitRenameWsSheet(e) {
   e.preventDefault();
-  const newName = document.getElementById('f-ws-sheet-name').value.trim();
-  if (!newName) return;
-  const sheet = sheets[renamingWsSheetIndex];
-  const res = await apiFetch(
-    `/api/admin/workspaces/${workspaceData.id}/sheets/${sheet.id}`,
-    { method: 'PATCH', body: JSON.stringify({ sheet_name: newName }) }
-  );
-  if (res.ok) {
-    sheet.sheet_name = newName;
-    closeModal();
-    renderTabs();
-    showToast('이름이 변경되었습니다', 'success');
-  } else {
-    const e2 = await res.json();
-    showToast(e2.detail || '변경 실패', 'error');
+  try {
+    const newName = document.getElementById('f-ws-sheet-name').value.trim();
+    if (!newName) return;
+    const sheet = sheets[renamingWsSheetIndex];
+    if (!sheet) { showToast('시트를 찾을 수 없습니다', 'error'); return; }
+    const res = await apiFetch(
+      `/api/admin/workspaces/${workspaceData.id}/sheets/${sheet.id}`,
+      { method: 'PATCH', body: JSON.stringify({ sheet_name: newName }) }
+    );
+    if (res.ok) {
+      sheet.sheet_name = newName;
+      closeModal();
+      renderTabs();
+      showToast('이름이 변경되었습니다', 'success');
+    } else {
+      const e2 = await res.json().catch(() => ({}));
+      showToast(e2.detail || '변경 실패', 'error');
+    }
+  } catch (err) {
+    showToast('시트 이름 변경 실패: ' + err.message, 'error');
   }
 }
 

@@ -623,12 +623,12 @@ def _shift_merges(merges: list[str], at_row: int, shift: int) -> list[str]:
         try:
             min_col, min_row, max_col, max_row = range_boundaries(rng)
             if shift > 0:
-                # Insert: shift ranges at or below at_row
+                # Insert: at_row is 0-based, min_row/max_row are 1-based
+                # Row at 1-based N corresponds to 0-based index N-1
+                # Shift rows whose 0-based index >= at_row, i.e., 1-based > at_row
                 if min_row > at_row:
                     min_row += shift
-                elif min_row == at_row:
-                    min_row += shift
-                if max_row >= at_row:
+                if max_row > at_row:
                     max_row += shift
             else:
                 # Delete: remove ranges that overlap deleted row, shift others

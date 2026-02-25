@@ -470,7 +470,9 @@ async def import_workspace_xlsx(
         all_rows = list(excel_ws.iter_rows(values_only=False))
 
         tmpl_sheet = tmpl_sheets_map.get(ws_sheet.template_sheet_id)
-        num_cols = len(tmpl_sheet.columns) if tmpl_sheet else 256
+        num_cols = len(tmpl_sheet.columns) if tmpl_sheet else 0
+        # xlsx 실제 컬럼 수도 반영 (열 삽입으로 확장된 경우 포함)
+        num_cols = max(num_cols, excel_ws.max_column or 0, 1)
 
         # 병합, 행높이, 틀고정 업데이트
         merges_list = [str(mr) for mr in excel_ws.merged_cells.ranges]
@@ -489,16 +491,18 @@ async def import_workspace_xlsx(
                 cell = row[ci] if ci < len(row) else None
                 if cell is None or cell.value is None:
                     style_json = _extract_cell_style(cell) if cell else None
-                    if style_json:
+                    comment_text = cell.comment.text.strip() if cell and cell.comment else None
+                    if style_json or comment_text:
                         db.add(WorkspaceCell(
                             id=str(uuid.uuid4()), sheet_id=ws_sheet.id,
                             row_index=ri, col_index=ci,
-                            value=None, style=style_json,
+                            value=None, style=style_json, comment=comment_text,
                             updated_by=current_user.id, updated_at=_now(),
                         ))
                     continue
                 raw = cell.value
                 style_json = _extract_cell_style(cell)
+                comment_text = cell.comment.text.strip() if cell.comment else None
                 if cell.data_type == 'f' or (isinstance(raw, str) and raw.startswith("=")):
                     raw_str = str(raw)
                     val = raw_str if raw_str.startswith("=") else "=" + raw_str
@@ -511,6 +515,7 @@ async def import_workspace_xlsx(
                     col_index=ci,
                     value=val,
                     style=style_json,
+                    comment=comment_text,
                     updated_by=current_user.id,
                     updated_at=_now(),
                 ))

@@ -94,6 +94,17 @@ const ctx = {
     const patches = changes.map(c => ({ row: c.row, col: c.col, value: c.newVal, style: null }));
     if (patches.length > 0) sendBatchPatch(sheet.id, patches);
   },
+  onFormulaBarChange: (row, col, value) => {
+    const sheet = sheets[currentSheetIndex];
+    if (!sheet) return;
+    queuePatch(sheet.id, row, col, value, null);
+  },
+  onReplaceChange: (changes) => {
+    const sheet = sheets[currentSheetIndex];
+    if (!sheet) return;
+    const patches = changes.map(c => ({ row: c.row, col: c.col, value: c.newVal, style: null }));
+    if (patches.length > 0) sendBatchPatch(sheet.id, patches);
+  },
   onRowInsert: (rowIndex, direction) => { insertRowApi(rowIndex, direction); },
   onRowDelete: (rowIndex) => { deleteRowApi(rowIndex); },
   onColumnInsert: (colIndex, direction) => { insertColApi(colIndex, direction); },
@@ -318,10 +329,8 @@ async function loadSheet(index) {
   const formulaBar = document.getElementById('formula-bar');
   if (formulaBar) formulaBar.style.display = isEditable ? 'flex' : 'none';
 
-  // 셀 메모 표시
-  if (data.comments && Object.keys(data.comments).length > 0) {
-    SpreadsheetCore.addCommentIndicators(ctx, data.comments);
-  }
+  // 셀 메모 표시 (시트 전환 시 이전 시트 메모 잔존 방지 위해 항상 호출)
+  SpreadsheetCore.addCommentIndicators(ctx, data.comments || {});
 
   // 조건부 서식 적용
   if (data.conditional_formats && data.conditional_formats.length > 0) {

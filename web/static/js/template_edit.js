@@ -75,7 +75,42 @@ const ctx = {
     }));
     if (batch.length > 0) flushBatch(batch);
   },
+  onFormulaBarChange: (row, col, value) => {
+    enqueueSave(row, col, value);
+  },
+  onReplaceChange: (changes) => {
+    const batch = changes.map(c => ({
+      row_index: c.row,
+      col_index: c.col,
+      value: c.newVal || null,
+    }));
+    if (batch.length > 0) flushBatch(batch);
+  },
   onCommentChange: (row, col, comment) => { saveCommentTemplate(row, col, comment); },
+  onRowInsert: (rowIndex, direction) => {
+    const ss = ctx.getSpreadsheet();
+    if (!ss) return;
+    ss.insertRow(1, rowIndex, direction === 'above');
+    saveAllCells();
+  },
+  onRowDelete: (rowIndex) => {
+    const ss = ctx.getSpreadsheet();
+    if (!ss) return;
+    ss.deleteRow(rowIndex);
+    saveAllCells();
+  },
+  onColumnInsert: (colIndex, direction) => {
+    const ss = ctx.getSpreadsheet();
+    if (!ss) return;
+    ss.insertColumn(1, colIndex, direction === 'before');
+    saveAllCells();
+  },
+  onColumnDelete: (colIndex) => {
+    const ss = ctx.getSpreadsheet();
+    if (!ss) return;
+    ss.deleteColumn(colIndex);
+    saveAllCells();
+  },
   undoManager: new SpreadsheetCore.UndoManager(),
 };
 
@@ -284,10 +319,8 @@ async function loadSheet(index) {
 
   attachHeaderClickListeners();
 
-  // 셀 메모 표시
-  if (data.comments && Object.keys(data.comments).length > 0) {
-    SpreadsheetCore.addCommentIndicators(ctx, data.comments);
-  }
+  // 셀 메모 표시 (시트 전환 시 이전 시트 메모 잔존 방지 위해 항상 호출)
+  SpreadsheetCore.addCommentIndicators(ctx, data.comments || {});
 
   // 조건부 서식 적용
   if (data.conditional_formats && data.conditional_formats.length > 0) {
@@ -559,6 +592,39 @@ async function flushBatch(batch) {
     `/api/admin/templates/${templateData.id}/sheets/${sheet.id}/cells`,
     { method: 'POST', body: JSON.stringify(batch) }
   );
+}
+
+// 행/열 삽입·삭제 후 전체 셀 재동기화 (replace=true로 기존 셀 삭제 후 재저장)
+async function saveAllCells() {
+  const ss = ctx.getSpreadsheet();
+  const sheet = sheets[currentSheetIndex];
+  if (!ss || !sheet) return;
+
+  // 대기 중인 저장 버리기 (전체 동기화로 대체)
+  savePending = [];
+  clearTimeout(saveTimer);
+
+  const data = ss.getData();
+  const batch = [];
+  for (let r = 0; r < data.length; r++) {
+    for (let c = 0; c < (data[r] || []).length; c++) {
+      const val = data[r][c];
+      if (val !== '' && val !== null && val !== undefined) {
+        batch.push({ row_index: r, col_index: c, value: String(val) });
+      }
+    }
+  }
+
+  setSaveStatus('동기화 중...');
+  showSaveIndicator();
+  const res = await apiFetch(
+    `/api/admin/templates/${templateData.id}/sheets/${sheet.id}/cells?replace=true`,
+    { method: 'POST', body: JSON.stringify(batch) }
+  );
+  hideSaveIndicator();
+  if (res.ok) setSaveStatus('저장됨');
+  else setSaveStatus('저장 실패');
+  setTimeout(() => setSaveStatus(''), 2000);
 }
 
 function setSaveStatus(msg) {

@@ -798,6 +798,7 @@ async def batch_save_cells(
     template_id: str,
     sheet_id: str,
     body: list[CellBatchItem],
+    replace: bool = False,
     current_user: User = Depends(require_admin),
     db: DBSession = Depends(get_db),
 ):
@@ -807,6 +808,10 @@ async def batch_save_cells(
     ).first()
     if not sheet:
         raise HTTPException(status_code=404, detail="Sheet not found")
+
+    # replace=true: 기존 셀 전부 삭제 후 새로 저장 (행/열 삽입·삭제 후 전체 동기화용)
+    if replace:
+        db.query(TemplateCell).filter(TemplateCell.sheet_id == sheet_id).delete()
 
     for item in body:
         if not (0 <= item.row_index < MAX_ROWS):
@@ -1002,8 +1007,13 @@ async def export_template_xlsx(
             for ci in range(len(cols)):
                 c = cells_map.get((ri, ci))
                 if c:
-                    ws_cell = ws.cell(row=ri + 1, column=ci + 1,
-                                      value=c.formula if c.formula else c.value)
+                    val = c.formula if c.formula else c.value
+                    if val is not None and not val.startswith("="):
+                        try:
+                            val = int(val) if "." not in val else float(val)
+                        except (ValueError, TypeError):
+                            pass
+                    ws_cell = ws.cell(row=ri + 1, column=ci + 1, value=val)
                     _apply_cell_style(ws_cell, c.style)
                     if c.comment:
                         from openpyxl.comments import Comment as XlComment

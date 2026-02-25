@@ -623,10 +623,12 @@ function replaceCurrent(ctx) {
   const caseSensitive = (document.getElementById('find-case') || {}).checked || false;
   const regex = new RegExp(_escapeRegex(query), caseSensitive ? 'g' : 'gi');
   const newVal = oldVal.replace(regex, replaceVal);
-  try { ss.setValueFromCoords(r.col, r.row, newVal); } catch(e) {}
+  try { ss.setValueFromCoords(r.col, r.row, newVal, true); } catch(e) {}
   if (ctx.undoManager) {
     ctx.undoManager.push({ type: 'value', changes: [{ row: r.row, col: r.col, oldVal, newVal }] });
   }
+  // onchange 억제했으므로 서버 저장 직접 호출
+  if (ctx.onReplaceChange) ctx.onReplaceChange([{ row: r.row, col: r.col, oldVal, newVal }]);
   // rebuild results
   _findState.lastQuery = '';
   findNext(ctx);
@@ -648,12 +650,13 @@ function replaceAll(ctx) {
     try { oldVal = ss.getValueFromCoords(r.col, r.row) || ''; } catch(e) {}
     const newVal = oldVal.replace(regex, replaceVal);
     if (newVal !== oldVal) {
-      try { ss.setValueFromCoords(r.col, r.row, newVal); } catch(e) {}
+      try { ss.setValueFromCoords(r.col, r.row, newVal, true); } catch(e) {}
       changes.push({ row: r.row, col: r.col, oldVal, newVal });
     }
   }
-  if (changes.length > 0 && ctx.undoManager) {
-    ctx.undoManager.push({ type: 'value', changes });
+  if (changes.length > 0) {
+    if (ctx.undoManager) ctx.undoManager.push({ type: 'value', changes });
+    if (ctx.onReplaceChange) ctx.onReplaceChange(changes);
   }
   _findState = { results: [], current: -1, lastQuery: '' };
   updateFindCount();
@@ -734,9 +737,13 @@ function handleFormulaBarEnter(ctx, inputEl) {
   const newVal = inputEl.value;
   let oldVal = '';
   try { oldVal = ss.getValueFromCoords(sel.x1, sel.y1) || ''; } catch(e) {}
-  try { ss.setValueFromCoords(sel.x1, sel.y1, newVal); } catch(e) {}
+  try { ss.setValueFromCoords(sel.x1, sel.y1, newVal, true); } catch(e) {}
   if (ctx.undoManager && oldVal !== newVal) {
     ctx.undoManager.push({ type: 'value', changes: [{ row: sel.y1, col: sel.x1, oldVal, newVal }] });
+  }
+  // onchange 억제했으므로 서버 저장 직접 호출
+  if (oldVal !== newVal && ctx.onFormulaBarChange) {
+    ctx.onFormulaBarChange(sel.y1, sel.x1, newVal);
   }
   // Blur to return focus to spreadsheet
   inputEl.blur();

@@ -563,7 +563,13 @@ async def export_workspace_xlsx(
         # 셀 데이터 + 스타일 + 메모
         cells = db.query(WorkspaceCell).filter(WorkspaceCell.sheet_id == ws_sheet.id).all()
         for c in cells:
-            excel_cell = excel_ws.cell(row=c.row_index + 1, column=c.col_index + 1, value=c.value)
+            val = c.value
+            if val is not None and not val.startswith("="):
+                try:
+                    val = int(val) if "." not in val else float(val)
+                except (ValueError, TypeError):
+                    pass
+            excel_cell = excel_ws.cell(row=c.row_index + 1, column=c.col_index + 1, value=val)
             _apply_cell_style(excel_cell, c.style)
             if c.comment:
                 from openpyxl.comments import Comment as XlComment

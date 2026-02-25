@@ -877,15 +877,16 @@ function renameWsSheet(index) {
       inp.value = sheets[index].sheet_name;
       inp.focus();
       inp.select();
-      // 프로그래밍 방식으로 submit 핸들러 연결 (inline onsubmit 백업)
       const form = inp.closest('form');
-      if (form) form.onsubmit = submitRenameWsSheet;
+      if (form) {
+        form.onsubmit = function(ev) { ev.preventDefault(); submitRenameWsSheet(ev); return false; };
+      }
     }
   }, 50);
 }
 
 async function submitRenameWsSheet(e) {
-  e.preventDefault();
+  if (e && e.preventDefault) e.preventDefault();
   try {
     const newName = document.getElementById('f-ws-sheet-name').value.trim();
     if (!newName) return;
@@ -902,7 +903,7 @@ async function submitRenameWsSheet(e) {
       showToast('이름이 변경되었습니다', 'success');
     } else {
       const e2 = await res.json().catch(() => ({}));
-      showToast(e2.detail || '변경 실패', 'error');
+      showToast(e2.detail || `변경 실패 (HTTP ${res.status})`, 'error');
     }
   } catch (err) {
     showToast('시트 이름 변경 실패: ' + err.message, 'error');

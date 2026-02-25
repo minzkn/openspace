@@ -156,7 +156,7 @@
 
 <!-- 시트 이름변경 모달 -->
 <template id="rename-ws-sheet-tpl">
-  <form onsubmit="submitRenameWsSheet(event)" style="display:flex;flex-direction:column;gap:12px">
+  <form onsubmit="submitRenameWsSheet(event); return false;" style="display:flex;flex-direction:column;gap:12px">
     <div class="form-group">
       <label>시트 이름</label>
       <input type="text" id="f-ws-sheet-name" required>

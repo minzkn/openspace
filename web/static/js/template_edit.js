@@ -514,13 +514,15 @@ function renameSheet(index) {
       inp.focus();
       inp.select();
       const form = inp.closest('form');
-      if (form) form.onsubmit = submitRenameSheet;
+      if (form) {
+        form.onsubmit = function(ev) { ev.preventDefault(); submitRenameSheet(ev); return false; };
+      }
     }
   }, 50);
 }
 
 async function submitRenameSheet(e) {
-  e.preventDefault();
+  if (e && e.preventDefault) e.preventDefault();
   try {
     const newName = document.getElementById('f-sheet-name').value.trim();
     if (!newName) return;
@@ -537,7 +539,7 @@ async function submitRenameSheet(e) {
       showToast('이름이 변경되었습니다', 'success');
     } else {
       const e2 = await res.json().catch(() => ({}));
-      showToast(e2.detail || '변경 실패', 'error');
+      showToast(e2.detail || `변경 실패 (HTTP ${res.status})`, 'error');
     }
   } catch (err) {
     showToast('시트 이름 변경 실패: ' + err.message, 'error');

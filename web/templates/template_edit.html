@@ -192,7 +192,7 @@
 
 <!-- 시트 이름 변경 모달 -->
 <template id="rename-sheet-tpl">
-  <form onsubmit="submitRenameSheet(event)" style="display:flex;flex-direction:column;gap:12px">
+  <form onsubmit="submitRenameSheet(event); return false;" style="display:flex;flex-direction:column;gap:12px">
     <div class="form-group">
       <label>시트 이름</label>
       <input type="text" id="f-sheet-name" required>

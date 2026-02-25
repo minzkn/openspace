@@ -31,6 +31,10 @@ let selX1 = 0, selY1 = 0, selX2 = 0, selY2 = 0;
 // 숫자 서식 맵 (cellName → numFmt 문자열)
 let numFmtMap = {};
 
+// 프로그래밍적 셀 변경 중 onchange 억제 플래그 (피드백 루프 및 중복 전송 방지)
+// var 사용: spreadsheet_core.js IIFE에서도 접근 가능하도록 window 프로퍼티로 등록
+var _suppressOnChange = false;
+
 const BATCH_DELAY = 100;
 
 // 수식 엔진
@@ -293,6 +297,7 @@ async function loadSheet(index) {
     mergeCells,
     freezeColumns,
     onchange: handleCellChange,
+    onbeforepaste: function() { _suppressOnChange = true; },
     onpaste: handlePaste,
     onbeforechange: handleBeforeChange,
     onselection: handleSelection,
@@ -360,6 +365,7 @@ function mapColType(t) {
 
 // ── 셀 변경 핸들러 ────────────────────────────────────────────
 function handleBeforeChange(instance, cell, x, y, value) {
+  if (_suppressOnChange) return value;
   const sheet = sheets[currentSheetIndex];
   if (!sheet) return value;
   const col = sheet.columns[x];
@@ -373,6 +379,7 @@ function handleBeforeChange(instance, cell, x, y, value) {
 }
 
 function handleCellChange(instance, cell, x, y, value) {
+  if (_suppressOnChange) return;
   const sheet = sheets[currentSheetIndex];
   if (!sheet) return;
   let rawValue = value;
@@ -395,24 +402,30 @@ function handleCellChange(instance, cell, x, y, value) {
 }
 
 function handlePaste(instance, data) {
+  // onbeforepaste에서 _suppressOnChange=true 설정 → handleCellChange 중복 방지
+  _suppressOnChange = false;
   const sheet = sheets[currentSheetIndex];
   if (!sheet) return;
   const patches = [];
   const undoChanges = [];
   data.forEach(item => {
+    const ix = item[1];
+    // 읽기 전용 컬럼은 붙여넣기 대상에서 제외 (ADMIN 제외)
+    const col = sheet.columns[ix];
+    if (col && col.is_readonly && !IS_ADMIN) return;
     let rawValue = item[3];
     let oldVal = '';
     try {
       const gridData = instance.options.data;
-      const iy = item[0], ix = item[1];
+      const iy = item[0];
       oldVal = instance.getValueFromCoords(ix, iy) || '';
       if (gridData && iy < gridData.length && gridData[iy] && ix < gridData[iy].length) {
         const raw = gridData[iy][ix];
         if (raw !== undefined && raw !== null) rawValue = String(raw);
       }
     } catch(e) {}
-    patches.push({ row: item[0], col: item[1], value: rawValue });
-    undoChanges.push({ row: item[0], col: item[1], oldVal, newVal: rawValue });
+    patches.push({ row: item[0], col: ix, value: rawValue });
+    undoChanges.push({ row: item[0], col: ix, oldVal, newVal: rawValue });
   });
   if (undoChanges.length > 0 && ctx.undoManager) {
     ctx.undoManager.push({ type: 'value', changes: undoChanges });
@@ -553,32 +566,36 @@ function applyRemotePatch(msg) {
   const sheet = sheets[currentSheetIndex];
   if (!sheet || msg.sheet_id !== sheet.id) return;
   if (!spreadsheet) return;
-  if (msg.value !== undefined && msg.value !== null) {
-    try { spreadsheet.setValueFromCoords(msg.col, msg.row, msg.value || '', true); } catch(e) {}
-  }
-  if (msg.style) {
-    try {
-      const cellName = SpreadsheetCore.colIndexToLetter(msg.col) + (msg.row + 1);
-      const s = JSON.parse(msg.style);
-      const css = SpreadsheetCore.styleObjToCss(s);
-      spreadsheet.setStyle({ [cellName]: css });
-      // numFmtMap 갱신 (원격 사용자의 숫자 서식 변경)
-      if (s.numFmt) {
-        numFmtMap[cellName] = s.numFmt;
-      } else {
-        delete numFmtMap[cellName];
-      }
-    } catch(e) {}
-  }
-  if (msg.comment !== undefined && msg.comment !== null) {
-    const cellName = SpreadsheetCore.colIndexToLetter(msg.col) + (msg.row + 1);
-    const commentsMap = SpreadsheetCore.getCommentsMap();
-    if (msg.comment) {
-      commentsMap[cellName] = msg.comment;
-    } else {
-      delete commentsMap[cellName];
+  _suppressOnChange = true;
+  try {
+    if (msg.value !== undefined && msg.value !== null) {
+      try { spreadsheet.setValueFromCoords(msg.col, msg.row, msg.value || '', true); } catch(e) {}
     }
-    SpreadsheetCore.addCommentIndicators(ctx, commentsMap);
+    if (msg.style) {
+      try {
+        const cellName = SpreadsheetCore.colIndexToLetter(msg.col) + (msg.row + 1);
+        const s = JSON.parse(msg.style);
+        const css = SpreadsheetCore.styleObjToCss(s);
+        spreadsheet.setStyle({ [cellName]: css });
+        if (s.numFmt) {
+          numFmtMap[cellName] = s.numFmt;
+        } else {
+          delete numFmtMap[cellName];
+        }
+      } catch(e) {}
+    }
+    if (msg.comment !== undefined && msg.comment !== null) {
+      const cellName = SpreadsheetCore.colIndexToLetter(msg.col) + (msg.row + 1);
+      const commentsMap = SpreadsheetCore.getCommentsMap();
+      if (msg.comment) {
+        commentsMap[cellName] = msg.comment;
+      } else {
+        delete commentsMap[cellName];
+      }
+      SpreadsheetCore.addCommentIndicators(ctx, commentsMap);
+    }
+  } finally {
+    _suppressOnChange = false;
   }
 }
 
@@ -636,7 +653,12 @@ async function insertColApi(colIndex, direction) {
   if (!sheet) return;
   // jspreadsheet CE v4: insertColumn(num, colIndex, insertBefore)
   // insertBefore=1 → 왼쪽, insertBefore=0 → 오른쪽
-  try { spreadsheet.insertColumn(1, colIndex, direction === 'before' ? 1 : 0); } catch(e) {}
+  try {
+    spreadsheet.insertColumn(1, colIndex, direction === 'before' ? 1 : 0);
+  } catch(e) {
+    console.error('insertColumn error:', e);
+    showToast('열 삽입 실패 (로컬): ' + e.message, 'error');
+  }
   const res = await apiFetch(
     `/api/workspaces/${workspaceData.id}/sheets/${sheet.id}/cols/insert`,
     { method: 'POST', body: JSON.stringify({ col_index: colIndex, count: 1, direction }) }
@@ -650,7 +672,12 @@ async function insertColApi(colIndex, direction) {
 async function deleteColApi(colIndex) {
   const sheet = sheets[currentSheetIndex];
   if (!sheet) return;
-  try { spreadsheet.deleteColumn(colIndex); } catch(e) {}
+  try {
+    spreadsheet.deleteColumn(colIndex);
+  } catch(e) {
+    console.error('deleteColumn error:', e);
+    showToast('열 삭제 실패 (로컬): ' + e.message, 'error');
+  }
   const res = await apiFetch(
     `/api/workspaces/${workspaceData.id}/sheets/${sheet.id}/cols/delete`,
     { method: 'POST', body: JSON.stringify({ col_indices: [colIndex] }) }

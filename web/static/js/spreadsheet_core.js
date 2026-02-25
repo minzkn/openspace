@@ -303,10 +303,13 @@ function fmtNumFormat(ctx, fmt) { applyStyleToSelection(ctx, 'numFmt', fmt || nu
 // ── 병합 ───────────────────────────────────────────────────
 function fmtMerge(ctx) {
   const ss = ctx.getSpreadsheet();
-  if (!ss) return;
+  if (!ss) { if (typeof showToast === 'function') showToast('스프레드시트가 로드되지 않았습니다', 'error'); return; }
   if (!ctx.canMerge()) return;
   const sel = ctx.getSelection();
-  if (sel.x1 === sel.x2 && sel.y1 === sel.y2) return; // 단일 셀 병합 불가
+  if (sel.x1 === sel.x2 && sel.y1 === sel.y2) {
+    if (typeof showToast === 'function') showToast('병합할 셀 범위를 선택하세요 (2개 이상)', 'error');
+    return;
+  }
   try {
     var cellName = colIndexToLetter(sel.x1) + (sel.y1 + 1);
     var colspan = sel.x2 - sel.x1 + 1;
@@ -323,9 +326,14 @@ function fmtUnmerge(ctx) {
   const sel = ctx.getSelection();
   try {
     var cellName = colIndexToLetter(sel.x1) + (sel.y1 + 1);
+    var merges = ss.getMerge();
+    if (!merges || !merges[cellName]) {
+      if (typeof showToast === 'function') showToast('선택한 셀에 병합이 없습니다', 'error');
+      return;
+    }
     ss.removeMerge(cellName);
     if (ctx.onMergeChange) ctx.onMergeChange();
-  } catch(e) { if (typeof showToast === 'function') showToast('병합 해제 실패', 'error'); }
+  } catch(e) { if (typeof showToast === 'function') showToast('병합 해제 실패: ' + e.message, 'error'); }
 }
 
 // ── 테두리 ─────────────────────────────────────────────────
@@ -421,41 +429,44 @@ class UndoManager {
     const ss = ctx.getSpreadsheet();
     if (!ss) return;
 
-    if (action.type === 'value') {
-      // { type: 'value', changes: [{row, col, oldVal, newVal}] }
-      const changes = action.changes;
-      for (const c of changes) {
-        const val = isUndo ? c.oldVal : c.newVal;
-        try { ss.setValueFromCoords(c.col, c.row, val || '', true); } catch(e) {}
-      }
-      ctx.onUndoRedoValue(changes, isUndo);
-    }
-    else if (action.type === 'style') {
-      // { type: 'style', cells: [{cellName, oldCss, newCss}] }
-      const styleMap = {};
-      for (const c of action.cells) {
-        styleMap[c.cellName] = isUndo ? c.oldCss : c.newCss;
-      }
-      try { ss.setStyle(styleMap); } catch(e) {}
-      ctx.onStyleChange(styleMap);
-    }
-    else if (action.type === 'batch') {
-      // combined value+style action
-      if (action.values) {
-        for (const c of action.values) {
+    // setValueFromCoords가 onchange 트리거 → handleCellChange 중복 전송 방지
+    if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = true;
+    try {
+      if (action.type === 'value') {
+        const changes = action.changes;
+        for (const c of changes) {
           const val = isUndo ? c.oldVal : c.newVal;
           try { ss.setValueFromCoords(c.col, c.row, val || '', true); } catch(e) {}
         }
-        ctx.onUndoRedoValue(action.values, isUndo);
+        ctx.onUndoRedoValue(changes, isUndo);
       }
-      if (action.styles) {
+      else if (action.type === 'style') {
         const styleMap = {};
-        for (const c of action.styles) {
+        for (const c of action.cells) {
           styleMap[c.cellName] = isUndo ? c.oldCss : c.newCss;
         }
         try { ss.setStyle(styleMap); } catch(e) {}
         ctx.onStyleChange(styleMap);
       }
+      else if (action.type === 'batch') {
+        if (action.values) {
+          for (const c of action.values) {
+            const val = isUndo ? c.oldVal : c.newVal;
+            try { ss.setValueFromCoords(c.col, c.row, val || '', true); } catch(e) {}
+          }
+          ctx.onUndoRedoValue(action.values, isUndo);
+        }
+        if (action.styles) {
+          const styleMap = {};
+          for (const c of action.styles) {
+            styleMap[c.cellName] = isUndo ? c.oldCss : c.newCss;
+          }
+          try { ss.setStyle(styleMap); } catch(e) {}
+          ctx.onStyleChange(styleMap);
+        }
+      }
+    } finally {
+      if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = false;
     }
   }
 
@@ -543,15 +554,20 @@ function deleteSelectedCells(ctx) {
   if (!ss || !ctx.isEditable()) return;
   const sel = ctx.getSelection();
   const changes = [];
-  for (let r = sel.y1; r <= sel.y2; r++) {
-    for (let c = sel.x1; c <= sel.x2; c++) {
-      let oldVal = '';
-      try { oldVal = ss.getValueFromCoords(c, r) || ''; } catch(e) {}
-      if (oldVal !== '') {
-        changes.push({ row: r, col: c, oldVal: oldVal, newVal: '' });
-        try { ss.setValueFromCoords(c, r, '', true); } catch(e) {}
+  if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = true;
+  try {
+    for (let r = sel.y1; r <= sel.y2; r++) {
+      for (let c = sel.x1; c <= sel.x2; c++) {
+        let oldVal = '';
+        try { oldVal = ss.getValueFromCoords(c, r) || ''; } catch(e) {}
+        if (oldVal !== '') {
+          changes.push({ row: r, col: c, oldVal: oldVal, newVal: '' });
+          try { ss.setValueFromCoords(c, r, '', true); } catch(e) {}
+        }
       }
     }
+  } finally {
+    if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = false;
   }
   if (changes.length > 0) {
     if (ctx.undoManager) ctx.undoManager.push({ type: 'value', changes });
@@ -625,7 +641,6 @@ function replaceCurrent(ctx) {
   if (_findState.results.length === 0 || _findState.current < 0) return;
   const replaceVal = (document.getElementById('replace-input') || {}).value || '';
   const r = _findState.results[_findState.current];
-  // raw 데이터에서 원본 값 읽기 (수식 셀 보호)
   let oldVal = '';
   try {
     const data = ss.getData();
@@ -637,13 +652,13 @@ function replaceCurrent(ctx) {
   const caseSensitive = (document.getElementById('find-case') || {}).checked || false;
   const regex = new RegExp(_escapeRegex(query), caseSensitive ? 'g' : 'gi');
   const newVal = oldVal.replace(regex, replaceVal);
+  if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = true;
   try { ss.setValueFromCoords(r.col, r.row, newVal, true); } catch(e) {}
+  finally { if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = false; }
   if (ctx.undoManager) {
     ctx.undoManager.push({ type: 'value', changes: [{ row: r.row, col: r.col, oldVal, newVal }] });
   }
-  // onchange 억제했으므로 서버 저장 직접 호출
   if (ctx.onReplaceChange) ctx.onReplaceChange([{ row: r.row, col: r.col, oldVal, newVal }]);
-  // rebuild results
   _findState.lastQuery = '';
   findNext(ctx);
 }
@@ -660,19 +675,23 @@ function replaceAll(ctx) {
   const regex = new RegExp(_escapeRegex(query), caseSensitive ? 'g' : 'gi');
   const changes = [];
   const data = ss.getData();
-  for (const r of _findState.results) {
-    // raw 데이터에서 원본 값 읽기 (수식 셀 보호)
-    let oldVal = '';
-    try {
-      if (data && data[r.row] && data[r.row][r.col] !== undefined && data[r.row][r.col] !== null) {
-        oldVal = String(data[r.row][r.col]);
+  if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = true;
+  try {
+    for (const r of _findState.results) {
+      let oldVal = '';
+      try {
+        if (data && data[r.row] && data[r.row][r.col] !== undefined && data[r.row][r.col] !== null) {
+          oldVal = String(data[r.row][r.col]);
+        }
+      } catch(e) {}
+      const newVal = oldVal.replace(regex, replaceVal);
+      if (newVal !== oldVal) {
+        try { ss.setValueFromCoords(r.col, r.row, newVal, true); } catch(e) {}
+        changes.push({ row: r.row, col: r.col, oldVal, newVal });
       }
-    } catch(e) {}
-    const newVal = oldVal.replace(regex, replaceVal);
-    if (newVal !== oldVal) {
-      try { ss.setValueFromCoords(r.col, r.row, newVal, true); } catch(e) {}
-      changes.push({ row: r.row, col: r.col, oldVal, newVal });
     }
+  } finally {
+    if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = false;
   }
   if (changes.length > 0) {
     if (ctx.undoManager) ctx.undoManager.push({ type: 'value', changes });
@@ -757,15 +776,15 @@ function handleFormulaBarEnter(ctx, inputEl) {
   const newVal = inputEl.value;
   let oldVal = '';
   try { oldVal = ss.getValueFromCoords(sel.x1, sel.y1) || ''; } catch(e) {}
+  if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = true;
   try { ss.setValueFromCoords(sel.x1, sel.y1, newVal, true); } catch(e) {}
+  finally { if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = false; }
   if (ctx.undoManager && oldVal !== newVal) {
     ctx.undoManager.push({ type: 'value', changes: [{ row: sel.y1, col: sel.x1, oldVal, newVal }] });
   }
-  // onchange 억제했으므로 서버 저장 직접 호출
   if (oldVal !== newVal && ctx.onFormulaBarChange) {
     ctx.onFormulaBarChange(sel.y1, sel.x1, newVal);
   }
-  // Blur to return focus to spreadsheet
   inputEl.blur();
 }
 
@@ -1035,16 +1054,21 @@ function sortColumn(ctx, colIdx, ascending) {
 
   // Apply sorted data
   const changes = [];
-  for (let r = 0; r < rows.length; r++) {
-    for (let c = 0; c < rows[r].data.length; c++) {
-      let oldVal = '';
-      try { oldVal = ss.getValueFromCoords(c, r) || ''; } catch(e) {}
-      const newVal = rows[r].data[c] || '';
-      if (oldVal !== newVal) {
-        try { ss.setValueFromCoords(c, r, newVal, true); } catch(e) {}
-        changes.push({ row: r, col: c, oldVal, newVal: String(newVal) });
+  if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = true;
+  try {
+    for (let r = 0; r < rows.length; r++) {
+      for (let c = 0; c < rows[r].data.length; c++) {
+        let oldVal = '';
+        try { oldVal = ss.getValueFromCoords(c, r) || ''; } catch(e) {}
+        const newVal = rows[r].data[c] || '';
+        if (oldVal !== newVal) {
+          try { ss.setValueFromCoords(c, r, newVal, true); } catch(e) {}
+          changes.push({ row: r, col: c, oldVal, newVal: String(newVal) });
+        }
       }
     }
+  } finally {
+    if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = false;
   }
   if (changes.length > 0) {
     if (ctx.undoManager) ctx.undoManager.push({ type: 'value', changes });
@@ -1143,30 +1167,30 @@ function _performAutofill(ctx, x1, x2, y1, y2, targetRow) {
   const srcHeight = y2 - y1 + 1;
   const changes = [];
 
-  for (let c = x1; c <= x2; c++) {
-    // Collect source values
-    const srcVals = [];
-    for (let r = y1; r <= y2; r++) {
-      try { srcVals.push(ss.getValueFromCoords(c, r) || ''); } catch(e) { srcVals.push(''); }
-    }
-
-    // Detect pattern
-    const pattern = _detectPattern(srcVals);
-
-    for (let r = y2 + 1; r <= targetRow; r++) {
-      const offset = r - y1;
-      let newVal;
-      if (pattern.type === 'number_seq') {
-        newVal = String(pattern.start + pattern.step * offset);
-      } else {
-        // repeat pattern
-        newVal = srcVals[offset % srcHeight];
+  if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = true;
+  try {
+    for (let c = x1; c <= x2; c++) {
+      const srcVals = [];
+      for (let r = y1; r <= y2; r++) {
+        try { srcVals.push(ss.getValueFromCoords(c, r) || ''); } catch(e) { srcVals.push(''); }
       }
-      let oldVal = '';
-      try { oldVal = ss.getValueFromCoords(c, r) || ''; } catch(e) {}
-      try { ss.setValueFromCoords(c, r, newVal); } catch(e) {}
-      changes.push({ row: r, col: c, oldVal, newVal });
+      const pattern = _detectPattern(srcVals);
+      for (let r = y2 + 1; r <= targetRow; r++) {
+        const offset = r - y1;
+        let newVal;
+        if (pattern.type === 'number_seq') {
+          newVal = String(pattern.start + pattern.step * offset);
+        } else {
+          newVal = srcVals[offset % srcHeight];
+        }
+        let oldVal = '';
+        try { oldVal = ss.getValueFromCoords(c, r) || ''; } catch(e) {}
+        try { ss.setValueFromCoords(c, r, newVal); } catch(e) {}
+        changes.push({ row: r, col: c, oldVal, newVal });
+      }
     }
+  } finally {
+    if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = false;
   }
 
   if (changes.length > 0) {

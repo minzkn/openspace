@@ -409,9 +409,6 @@ async def update_workspace_sheet(
         raise HTTPException(status_code=404, detail="Sheet not found")
     if body.sheet_name is not None:
         ws_sheet.sheet_name = body.sheet_name
-        tmpl_sheet = db.query(TemplateSheet).filter(TemplateSheet.id == ws_sheet.template_sheet_id).first()
-        if tmpl_sheet:
-            tmpl_sheet.sheet_name = body.sheet_name
     db.commit()
     import asyncio
     asyncio.create_task(hub.broadcast(workspace_id, {

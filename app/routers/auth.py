@@ -76,7 +76,10 @@ async def login(body: LoginRequest, request: Request, response: Response, db: DB
     _check_rate_limit(ip)
 
     user = db.query(User).filter(User.username == body.username, User.is_active == 1).first()
-    if not user or not crypto.verify_password(user.password_hash, body.password):
+    # 타이밍 공격 방지: 사용자 존재 여부와 무관하게 항상 동일한 시간이 걸리도록 더미 해시 검증 수행
+    _dummy_hash = "$argon2id$v=19$m=65536,t=3,p=4$AAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    valid = crypto.verify_password(user.password_hash if user else _dummy_hash, body.password)
+    if not user or not valid:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     ua = request.headers.get("user-agent")

@@ -144,17 +144,15 @@
 <!-- 스프레드시트 컨테이너 -->
 <div id="spreadsheet-container">
   <div id="spreadsheet"></div>
+  {% if workspace.status == 'CLOSED' and not is_admin %}
+  <div id="closed-overlay" class="closed-overlay">
+    <div class="closed-message">이 워크스페이스는 마감되었습니다.</div>
+  </div>
+  {% endif %}
 </div>
 
 <!-- 상태 표시줄 -->
 <div class="status-bar" id="status-bar"></div>
-
-<!-- CLOSED 오버레이 -->
-{% if workspace.status == 'CLOSED' and not is_admin %}
-<div id="closed-overlay" class="closed-overlay">
-  <div class="closed-message">이 워크스페이스는 마감되었습니다.</div>
-</div>
-{% endif %}
 
 <!-- 시트 이름변경 모달 -->
 <template id="rename-ws-sheet-tpl">

@@ -1212,9 +1212,10 @@ function _performAutofill(ctx, x1, x2, y1, y2, targetRow) {
 
 function _detectPattern(values) {
   if (values.length === 0) return { type: 'repeat' };
-  // Check if all values are numbers
+  // Check if all values are non-empty numbers (빈 문자열은 0으로 오감지 방지)
+  if (values.some(v => v === '' || v === null || v === undefined)) return { type: 'repeat' };
   const nums = values.map(Number);
-  if (nums.every(n => !isNaN(n) && values[0] !== '')) {
+  if (nums.every(n => !isNaN(n))) {
     if (nums.length >= 2) {
       const step = nums[1] - nums[0];
       const isSequence = nums.every((n, i) => i === 0 || Math.abs(n - nums[i-1] - step) < 1e-10);
@@ -1406,8 +1407,8 @@ function _evaluateRule(cellValue, ruleType, ruleValue, ruleValue2) {
   switch (ruleType) {
     case 'greaterThan': return !isNaN(num) && !isNaN(rv) && num > rv;
     case 'lessThan': return !isNaN(num) && !isNaN(rv) && num < rv;
-    case 'equalTo': return String(cellValue) === String(ruleValue);
-    case 'notEqualTo': return String(cellValue) !== String(ruleValue);
+    case 'equalTo': return (!isNaN(num) && !isNaN(rv)) ? num === rv : String(cellValue) === String(ruleValue);
+    case 'notEqualTo': return (!isNaN(num) && !isNaN(rv)) ? num !== rv : String(cellValue) !== String(ruleValue);
     case 'greaterThanOrEqual': return !isNaN(num) && !isNaN(rv) && num >= rv;
     case 'lessThanOrEqual': return !isNaN(num) && !isNaN(rv) && num <= rv;
     case 'between': return !isNaN(num) && !isNaN(rv) && !isNaN(rv2) && num >= rv && num <= rv2;

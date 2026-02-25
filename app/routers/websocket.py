@@ -39,7 +39,7 @@ def _get_user_from_session(session_id: str) -> tuple[User | None, DBSession]:
 
 @router.websocket("/ws/workspaces/{workspace_id}")
 async def ws_endpoint(websocket: WebSocket, workspace_id: str):
-    session_id = websocket.query_params.get("session_id")
+    session_id = websocket.cookies.get("session_id") or websocket.query_params.get("session_id")
     if not session_id:
         await websocket.close(code=4001)
         return

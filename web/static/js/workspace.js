@@ -452,9 +452,8 @@ function connectWebSocket() {
   }
   clearTimeout(wsReconnectTimer);
   setConnStatus('connecting');
-  const sessionId = getCookie('session_id');
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${proto}//${location.host}/ws/workspaces/${workspaceData.id}?session_id=${encodeURIComponent(sessionId || '')}`;
+  const url = `${proto}//${location.host}/ws/workspaces/${workspaceData.id}`;
 
   ws = new WebSocket(url);
   ws.onopen = () => { setConnStatus('connected'); clearTimeout(wsReconnectTimer); };

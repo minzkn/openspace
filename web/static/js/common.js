@@ -46,7 +46,15 @@ function showToast(message, type = 'info', duration = 3000) {
 }
 
 // ---- Modal ----
+function _releaseSpreadsheetFocus() {
+  if (typeof jexcel !== 'undefined' && jexcel.current) {
+    jexcel.current.resetSelection();
+    jexcel.current = null;
+  }
+}
+
 function showModal(title, contentHtml) {
+  _releaseSpreadsheetFocus();
   document.getElementById('modal-title').textContent = title;
   document.getElementById('modal-body').innerHTML = contentHtml;
   document.getElementById('modal-overlay').classList.remove('hidden');
@@ -87,6 +95,7 @@ function fmtDate(iso) {
 
 // ---- Password Change ----
 function openPasswordModal() {
+  _releaseSpreadsheetFocus();
   document.getElementById('pw-modal').classList.remove('hidden');
 }
 function closePwModal() {

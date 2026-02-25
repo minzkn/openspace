@@ -15,6 +15,7 @@ let sheets = [];
 let currentSheetIndex = 0;
 let spreadsheet = null;
 let selectedCol = -1;
+let tabClickTimer = null;
 
 let savePending = [];
 let saveTimer = null;
@@ -138,13 +139,19 @@ function renderTabs() {
     const tab = document.createElement('div');
     tab.className = 'sheet-tab' + (i === currentSheetIndex ? ' active' : '');
     tab.innerHTML =
-      `<span ondblclick="renameSheet(${i})" title="더블클릭으로 이름 변경">${esc(s.sheet_name)}</span>` +
+      `<span>${esc(s.sheet_name)}</span>` +
       (sheets.length > 1
         ? `<span class="tab-del" onclick="deleteSheet(${i})" title="시트 삭제">\u00d7</span>`
         : '');
     tab.addEventListener('click', (e) => {
       if (e.target.classList.contains('tab-del')) return;
-      switchSheet(i);
+      if (tabClickTimer) clearTimeout(tabClickTimer);
+      tabClickTimer = setTimeout(() => { tabClickTimer = null; switchSheet(i); }, 250);
+    });
+    tab.addEventListener('dblclick', (e) => {
+      if (tabClickTimer) { clearTimeout(tabClickTimer); tabClickTimer = null; }
+      if (i !== currentSheetIndex) switchSheet(i);
+      renameSheet(i);
     });
     wrap.appendChild(tab);
   });

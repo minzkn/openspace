@@ -20,6 +20,7 @@ let isClosed = false;
 let pendingPatches = [];
 let batchTimer = null;
 let renamingWsSheetIndex = -1;
+let tabClickTimer = null;
 
 // 현재 선택 범위
 let selX1 = 0, selY1 = 0, selX2 = 0, selY2 = 0;
@@ -167,15 +168,22 @@ function renderTabs() {
       ? `<span class="tab-del" onclick="deleteWsSheet(${i})" title="삭제">\u00d7</span>`
       : '';
     return `<div class="sheet-tab ${isActive ? 'active' : ''}"
-        onclick="handleTabClick(event, ${i})">
-      <span ${IS_ADMIN ? `ondblclick="renameWsSheet(${i})" title="더블클릭으로 이름 변경"` : ''}>${esc(s.sheet_name)}</span>${delBtn}
+        onclick="handleTabClick(event, ${i})" ${IS_ADMIN ? `ondblclick="handleTabDblClick(event, ${i})"` : ''}>
+      <span>${esc(s.sheet_name)}</span>${delBtn}
     </div>`;
   }).join('');
 }
 
 function handleTabClick(e, index) {
   if (e.target.classList.contains('tab-del')) return;
-  switchSheet(index);
+  if (tabClickTimer) clearTimeout(tabClickTimer);
+  tabClickTimer = setTimeout(() => { tabClickTimer = null; switchSheet(index); }, 250);
+}
+
+function handleTabDblClick(e, index) {
+  if (tabClickTimer) { clearTimeout(tabClickTimer); tabClickTimer = null; }
+  if (index !== currentSheetIndex) switchSheet(index);
+  renameWsSheet(index);
 }
 
 function switchSheet(index) {

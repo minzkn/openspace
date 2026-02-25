@@ -1141,8 +1141,9 @@ function _performAutofill(ctx, x1, x2, y1, y2, targetRow) {
     }
   }
 
-  if (changes.length > 0 && ctx.undoManager) {
-    ctx.undoManager.push({ type: 'value', changes });
+  if (changes.length > 0) {
+    if (ctx.undoManager) ctx.undoManager.push({ type: 'value', changes });
+    if (ctx.onAutofill) ctx.onAutofill(changes);
   }
 }
 

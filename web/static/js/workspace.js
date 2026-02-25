@@ -22,6 +22,9 @@ let batchTimer = null;
 let renamingWsSheetIndex = -1;
 let tabClickTimer = null;
 
+// 다중 탭 구분을 위한 고유 탭 ID (동일 사용자의 여러 탭에서 브로드캐스트 충돌 방지)
+const TAB_ID = crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2));
+
 // 현재 선택 범위
 let selX1 = 0, selY1 = 0, selX2 = 0, selY2 = 0;
 
@@ -583,8 +586,8 @@ function handleRemoteRowOp(msg) {
   const sheet = sheets[currentSheetIndex];
   if (!sheet || msg.sheet_id !== sheet.id) return;
   if (!spreadsheet) return;
-  // 자신이 발행한 메시지는 이미 로컬 적용됨 → 스킵
-  if (msg.updated_by === CURRENT_USER) return;
+  // 자신의 탭에서 발행한 메시지는 이미 로컬 적용됨 → 스킵 (tab_id로 정확한 탭 식별)
+  if (msg.tab_id && msg.tab_id === TAB_ID) return;
   if (msg.type === 'row_insert') {
     try { spreadsheet.insertRow(msg.count || 1, msg.row_index, true); } catch(e) {}
   } else if (msg.type === 'row_delete') {
@@ -662,8 +665,8 @@ function handleRemoteColOp(msg) {
   const sheet = sheets[currentSheetIndex];
   if (!sheet || msg.sheet_id !== sheet.id) return;
   if (!spreadsheet) return;
-  // 자신이 발행한 메시지는 이미 로컬 적용됨 → 스킵
-  if (msg.updated_by === CURRENT_USER) return;
+  // 자신의 탭에서 발행한 메시지는 이미 로컬 적용됨 → 스킵 (tab_id로 정확한 탭 식별)
+  if (msg.tab_id && msg.tab_id === TAB_ID) return;
   if (msg.type === 'col_insert') {
     try { spreadsheet.insertColumn(msg.count || 1, msg.col_index, true); } catch(e) {}
   } else if (msg.type === 'col_delete') {

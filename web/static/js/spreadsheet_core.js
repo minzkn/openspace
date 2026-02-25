@@ -338,11 +338,13 @@ function fmtBorder(ctx, preset, borderStyle, borderColor) {
   const bStyle = borderStyle || 'thin';
   const bColor = borderColor || '000000';
   const bd = { style: bStyle, color: bColor };
+  const oldStyles = {};
   const styleMap = {};
   for (let r = sel.y1; r <= sel.y2; r++) {
     for (let c = sel.x1; c <= sel.x2; c++) {
       const cellName = colIndexToLetter(c) + (r + 1);
       const cssStr = ss.getStyle(cellName) || '';
+      oldStyles[cellName] = cssStr;
       const s = cssToStyleObj(cssStr);
       if (preset === 'none') { delete s.border; }
       else if (preset === 'all') { s.border = { top: bd, bottom: bd, left: bd, right: bd }; }
@@ -361,6 +363,12 @@ function fmtBorder(ctx, preset, borderStyle, borderColor) {
     }
   }
   try { ss.setStyle(styleMap); } catch(e) {}
+  if (ctx.undoManager) {
+    ctx.undoManager.push({
+      type: 'style',
+      cells: Object.keys(styleMap).map(cn => ({ cellName: cn, oldCss: oldStyles[cn], newCss: styleMap[cn] })),
+    });
+  }
   if (ctx.onStyleChange) ctx.onStyleChange(styleMap);
 }
 
@@ -617,8 +625,14 @@ function replaceCurrent(ctx) {
   if (_findState.results.length === 0 || _findState.current < 0) return;
   const replaceVal = (document.getElementById('replace-input') || {}).value || '';
   const r = _findState.results[_findState.current];
+  // raw 데이터에서 원본 값 읽기 (수식 셀 보호)
   let oldVal = '';
-  try { oldVal = ss.getValueFromCoords(r.col, r.row) || ''; } catch(e) {}
+  try {
+    const data = ss.getData();
+    if (data && data[r.row] && data[r.row][r.col] !== undefined && data[r.row][r.col] !== null) {
+      oldVal = String(data[r.row][r.col]);
+    }
+  } catch(e) {}
   const query = (document.getElementById('find-input') || {}).value || '';
   const caseSensitive = (document.getElementById('find-case') || {}).checked || false;
   const regex = new RegExp(_escapeRegex(query), caseSensitive ? 'g' : 'gi');
@@ -645,9 +659,15 @@ function replaceAll(ctx) {
   if (_findState.results.length === 0) return;
   const regex = new RegExp(_escapeRegex(query), caseSensitive ? 'g' : 'gi');
   const changes = [];
+  const data = ss.getData();
   for (const r of _findState.results) {
+    // raw 데이터에서 원본 값 읽기 (수식 셀 보호)
     let oldVal = '';
-    try { oldVal = ss.getValueFromCoords(r.col, r.row) || ''; } catch(e) {}
+    try {
+      if (data && data[r.row] && data[r.row][r.col] !== undefined && data[r.row][r.col] !== null) {
+        oldVal = String(data[r.row][r.col]);
+      }
+    } catch(e) {}
     const newVal = oldVal.replace(regex, replaceVal);
     if (newVal !== oldVal) {
       try { ss.setValueFromCoords(r.col, r.row, newVal, true); } catch(e) {}
@@ -1193,12 +1213,40 @@ function hideCommentTooltip() {
   if (tooltip) tooltip.style.display = 'none';
 }
 
+var _commentDelegationInstalled = false;
+
 function addCommentIndicators(ctx, comments) {
   _commentsMap = comments || {};
   const container = document.getElementById('spreadsheet');
   if (!container) return;
   // Remove existing indicators
   container.querySelectorAll('.cell-comment-indicator').forEach(el => el.remove());
+
+  // 이벤트 위임: 컨테이너에 한 번만 등록 (리스너 누적 방지)
+  if (!_commentDelegationInstalled) {
+    _commentDelegationInstalled = true;
+    container.addEventListener('mouseenter', function(e) {
+      const td = e.target.closest('td[data-x][data-y]');
+      if (!td) return;
+      const col = parseInt(td.getAttribute('data-x'));
+      const row = parseInt(td.getAttribute('data-y'));
+      const cellName = colIndexToLetter(col) + (row + 1);
+      const c = _commentsMap[cellName];
+      if (c) {
+        const tooltip = _getOrCreateTooltip();
+        tooltip.textContent = c;
+        const rect = td.getBoundingClientRect();
+        tooltip.style.left = (rect.right + 4) + 'px';
+        tooltip.style.top = rect.top + 'px';
+        tooltip.style.display = 'block';
+      }
+    }, true);
+    container.addEventListener('mouseleave', function(e) {
+      const td = e.target.closest('td[data-x][data-y]');
+      if (td) hideCommentTooltip();
+    }, true);
+  }
+
   // Add indicators for cells with comments
   for (const [cellName, comment] of Object.entries(_commentsMap)) {
     const m = cellName.match(/^([A-Z]+)(\d+)$/);
@@ -1214,19 +1262,6 @@ function addCommentIndicators(ctx, comments) {
         indicator.className = 'cell-comment-indicator';
         td.appendChild(indicator);
       }
-      // Hover tooltip
-      td.addEventListener('mouseenter', function() {
-        const c = _commentsMap[cellName];
-        if (c) {
-          const tooltip = _getOrCreateTooltip();
-          tooltip.textContent = c;
-          const rect = td.getBoundingClientRect();
-          tooltip.style.left = (rect.right + 4) + 'px';
-          tooltip.style.top = rect.top + 'px';
-          tooltip.style.display = 'block';
-        }
-      });
-      td.addEventListener('mouseleave', hideCommentTooltip);
     }
   }
 }
@@ -1288,7 +1323,9 @@ function applyConditionalFormats(ctx, rules) {
         const cellName = colIndexToLetter(col) + (row + 1);
         const css = _condStyleToCss(rule.style);
         if (css) {
-          styleUpdates[cellName] = (styleUpdates[cellName] || '') + css;
+          // 기존 셀 스타일에 조건부 서식을 병합 (덮어쓰기 방지)
+          const existingCss = styleUpdates[cellName] || (ss.getStyle(cellName) || '');
+          styleUpdates[cellName] = existingCss + ';' + css;
         }
       }
     }

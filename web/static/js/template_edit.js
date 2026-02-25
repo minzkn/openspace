@@ -47,7 +47,7 @@ const ctx = {
     const batch = changes.map(c => ({
       row_index: c.row,
       col_index: c.col,
-      value: isUndo ? (c.oldVal || null) : (c.newVal || null),
+      value: isUndo ? (c.oldVal ?? null) : (c.newVal ?? null),
     }));
     flushBatch(batch);
   },
@@ -63,7 +63,7 @@ const ctx = {
     const batch = changes.map(c => ({
       row_index: c.row,
       col_index: c.col,
-      value: c.newVal || null,
+      value: c.newVal ?? null,
     }));
     if (batch.length > 0) flushBatch(batch);
   },
@@ -71,7 +71,7 @@ const ctx = {
     const batch = changes.map(c => ({
       row_index: c.row,
       col_index: c.col,
-      value: c.newVal || null,
+      value: c.newVal ?? null,
     }));
     if (batch.length > 0) flushBatch(batch);
   },
@@ -82,7 +82,7 @@ const ctx = {
     const batch = changes.map(c => ({
       row_index: c.row,
       col_index: c.col,
-      value: c.newVal || null,
+      value: c.newVal ?? null,
     }));
     if (batch.length > 0) flushBatch(batch);
   },

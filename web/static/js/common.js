@@ -20,6 +20,10 @@ async function apiFetch(url, options = {}) {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && csrfToken) {
     headers['X-CSRF-Token'] = csrfToken;
   }
+  // 다중 탭 브로드캐스트 구분용 (workspace.js에서 TAB_ID 정의)
+  if (typeof TAB_ID !== 'undefined') {
+    headers['X-Tab-ID'] = TAB_ID;
+  }
 
   const res = await fetch(url, {
     ...options,

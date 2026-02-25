@@ -3,7 +3,7 @@
 import uuid
 import json
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 
@@ -274,6 +274,7 @@ async def insert_rows(
     workspace_id: str,
     sheet_id: str,
     body: RowInsertRequest,
+    request: Request,
     current_user: User = Depends(require_user),
     db: DBSession = Depends(get_db),
 ):
@@ -343,6 +344,7 @@ async def insert_rows(
         "row_index": insert_at,
         "count": count,
         "updated_by": current_user.username,
+        "tab_id": request.headers.get("X-Tab-ID", ""),
     }, exclude=None))
 
     return {"message": "rows inserted", "row_index": insert_at, "count": count}
@@ -353,6 +355,7 @@ async def delete_rows(
     workspace_id: str,
     sheet_id: str,
     body: RowDeleteRequest,
+    request: Request,
     current_user: User = Depends(require_user),
     db: DBSession = Depends(get_db),
 ):
@@ -433,6 +436,7 @@ async def delete_rows(
         "sheet_id": sheet_id,
         "row_indices": indices,
         "updated_by": current_user.username,
+        "tab_id": request.headers.get("X-Tab-ID", ""),
     }, exclude=None))
 
     return {"message": "rows deleted", "count": len(indices)}
@@ -455,6 +459,7 @@ async def insert_cols(
     workspace_id: str,
     sheet_id: str,
     body: ColInsertRequest,
+    request: Request,
     current_user: User = Depends(require_user),
     db: DBSession = Depends(get_db),
 ):
@@ -506,6 +511,7 @@ async def insert_cols(
         "col_index": insert_at,
         "count": count,
         "updated_by": current_user.username,
+        "tab_id": request.headers.get("X-Tab-ID", ""),
     }, exclude=None))
 
     return {"message": "columns inserted", "col_index": insert_at, "count": count}
@@ -516,6 +522,7 @@ async def delete_cols(
     workspace_id: str,
     sheet_id: str,
     body: ColDeleteRequest,
+    request: Request,
     current_user: User = Depends(require_user),
     db: DBSession = Depends(get_db),
 ):
@@ -577,6 +584,7 @@ async def delete_cols(
         "sheet_id": sheet_id,
         "col_indices": indices,
         "updated_by": current_user.username,
+        "tab_id": request.headers.get("X-Tab-ID", ""),
     }, exclude=None))
 
     return {"message": "columns deleted", "count": len(indices)}

@@ -85,6 +85,38 @@ function fmtDate(iso) {
   return iso.replace('T', ' ').substring(0, 16);
 }
 
+// ---- Password Change ----
+function openPasswordModal() {
+  document.getElementById('pw-modal').classList.remove('hidden');
+}
+function closePwModal() {
+  document.getElementById('pw-modal').classList.add('hidden');
+  document.getElementById('pw-current').value = '';
+  document.getElementById('pw-new').value = '';
+  document.getElementById('pw-confirm').value = '';
+}
+async function submitPasswordChange() {
+  const current = document.getElementById('pw-current').value;
+  const nw = document.getElementById('pw-new').value;
+  const confirm_ = document.getElementById('pw-confirm').value;
+  if (!current || !nw) { showToast('모든 필드를 입력하세요.', 'error'); return; }
+  if (nw.length < 8) { showToast('새 비밀번호는 8자 이상이어야 합니다.', 'error'); return; }
+  if (nw !== confirm_) { showToast('새 비밀번호가 일치하지 않습니다.', 'error'); return; }
+  const res = await apiFetch('/api/auth/me/password', {
+    method: 'PATCH',
+    body: JSON.stringify({ current_password: current, new_password: nw }),
+  });
+  if (res.ok) {
+    showToast('비밀번호가 변경되었습니다.', 'success');
+    closePwModal();
+    var alert = document.getElementById('pw-change-alert');
+    if (alert) alert.style.display = 'none';
+  } else {
+    const d = await res.json();
+    showToast(d.detail || '변경 실패', 'error');
+  }
+}
+
 // ---- Escape HTML ----
 function esc(str) {
   if (str == null) return '';

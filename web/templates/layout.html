@@ -50,6 +50,7 @@
       <div class="topbar-user">
         <span class="username">{{ current_user.username }}</span>
         <span class="role-badge role-{{ current_user.role|lower }}">{{ current_user.role }}</span>
+        <button class="btn btn-sm btn-ghost" onclick="openPasswordModal()">비밀번호 변경</button>
         <button class="btn btn-sm btn-ghost" onclick="logout()">로그아웃</button>
       </div>
     </header>
@@ -70,6 +71,34 @@
       <button onclick="closeModal()" class="modal-close">&times;</button>
     </div>
     <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<!-- Password change modal -->
+<div id="pw-modal" class="modal-overlay hidden" onclick="if(event.target===this)closePwModal()">
+  <div class="modal-box" style="max-width:380px" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3>비밀번호 변경</h3>
+      <button class="modal-close" onclick="closePwModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>현재 비밀번호</label>
+        <input type="password" id="pw-current" class="form-input" placeholder="현재 비밀번호">
+      </div>
+      <div class="form-group">
+        <label>새 비밀번호 (8자 이상)</label>
+        <input type="password" id="pw-new" class="form-input" placeholder="새 비밀번호">
+      </div>
+      <div class="form-group">
+        <label>새 비밀번호 확인</label>
+        <input type="password" id="pw-confirm" class="form-input" placeholder="새 비밀번호 확인">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button class="btn btn-primary" onclick="submitPasswordChange()">변경</button>
+        <button class="btn btn-secondary" onclick="closePwModal()">취소</button>
+      </div>
+    </div>
   </div>
 </div>
 

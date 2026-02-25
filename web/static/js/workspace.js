@@ -161,9 +161,8 @@ function renderTabs() {
       ? `<span class="tab-del" onclick="deleteWsSheet(${i})" title="삭제">\u00d7</span>`
       : '';
     return `<div class="sheet-tab ${isActive ? 'active' : ''}"
-        onclick="handleTabClick(event, ${i})"
-        ondblclick="${IS_ADMIN ? `renameWsSheet(${i})` : ''}">
-      <span>${esc(s.sheet_name)}</span>${delBtn}
+        onclick="handleTabClick(event, ${i})">
+      <span ${IS_ADMIN ? `ondblclick="renameWsSheet(${i})" title="더블클릭으로 이름 변경"` : ''}>${esc(s.sheet_name)}</span>${delBtn}
     </div>`;
   }).join('');
 }

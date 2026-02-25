@@ -27,6 +27,13 @@
 |------|:----:|------|
 | 셀 병합 (Merge) | ✅ | import → 브라우저 표시 → 편집 → export |
 | 셀 스타일 (굵기·기울임·밑줄·색상·배경·테두리·정렬) | ✅ | import → 브라우저 표시 → 편집 → export |
+| 폰트 이름 (fontName) | ✅ | Arial, Malgun Gothic 등 비-Calibri 폰트 보존 |
+| 들여쓰기 (indent) | ✅ | Excel indent level 보존 |
+| 텍스트 회전 (textRotation) | ✅ | 각도 값 보존 |
+| 밑줄 유형 (underline) | ✅ | single, double, singleAccounting 등 보존 |
+| 테마 색상 (theme colors) | ✅ | theme/indexed/rgb 모든 타입 → RGB 변환 보존 |
+| 날짜/시간 값 (datetime) | ✅ | ISO 형식 저장, export 시 Excel 날짜 타입 복원 |
+| 불리언 값 (boolean) | ✅ | TRUE/FALSE로 저장, export 시 Excel 불리언 복원 |
 | 행 높이 | ✅ | xlsx pt 값 보존 |
 | 열 너비 | ✅ | xlsx 실제 값 반영 |
 | 숫자 서식 (numFmt) | ✅ | 저장 및 export 지원 |
@@ -190,28 +197,38 @@ SQLite (WAL)
 
 ### 스타일 JSON 형식
 
-셀 스타일은 `style` TEXT 컬럼에 JSON으로 저장됩니다.
+셀 스타일은 `style` TEXT 컬럼에 JSON으로 저장됩니다. 변경된 속성만 포함됩니다.
 
 ```json
 {
+  "fontName": "Arial",
   "bold": true,
   "italic": false,
-  "underline": false,
-  "fontSize": 11,
+  "underline": "single",
+  "strikethrough": false,
+  "fontSize": 14,
   "color": "FF0000",
   "bg": "FFFF00",
   "align": "center",
   "valign": "middle",
   "wrap": true,
+  "indent": 2,
+  "textRotation": 45,
   "border": {
     "top":    {"style": "thin", "color": "000000"},
-    "bottom": {"style": "thin", "color": "000000"},
-    "left":   {"style": "thin", "color": "000000"},
-    "right":  {"style": "thin", "color": "000000"}
+    "bottom": {"style": "medium", "color": "000000"},
+    "left":   {"style": "hair", "color": "000000"},
+    "right":  {"style": "dotted", "color": "000000"}
   },
   "numFmt": "0.00%"
 }
 ```
+
+- **fontName**: Calibri 이외의 폰트명만 저장
+- **underline**: 타입 문자열 보존 (`single`, `double`, `singleAccounting`, `doubleAccounting`)
+- **색상**: 6자리 RGB hex. import 시 theme/indexed/rgb 모든 타입을 RGB로 변환
+- **indent**: Excel 들여쓰기 레벨 (정수)
+- **textRotation**: Excel 텍스트 회전 각도 (0-180)
 
 ### 병합(Merges) 저장 형식
 

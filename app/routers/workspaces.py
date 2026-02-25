@@ -23,6 +23,7 @@ from ..ws_hub import hub
 from .templates import (
     _extract_cell_style, _apply_cell_style, _style_to_css,
     _range_to_jss, _freeze_to_cols, _pt_to_px,
+    _get_theme_colors, _stringify_value, _parse_value_for_excel,
 )
 
 router = APIRouter(tags=["workspaces"])
@@ -490,6 +491,7 @@ async def import_workspace_xlsx(
         raise HTTPException(status_code=400, detail="Invalid xlsx file")
 
     wb = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
+    theme_colors = _get_theme_colors(wb)
     ws_sheets = sorted(ws.sheets, key=lambda s: s.sheet_index)
 
     tmpl_sheet_ids = [s.template_sheet_id for s in ws_sheets if s.template_sheet_id]
@@ -529,7 +531,7 @@ async def import_workspace_xlsx(
             for ci in range(num_cols):
                 cell = row[ci] if ci < len(row) else None
                 if cell is None or cell.value is None:
-                    style_json = _extract_cell_style(cell) if cell else None
+                    style_json = _extract_cell_style(cell, theme_colors) if cell else None
                     comment_text = cell.comment.text.strip() if cell and cell.comment else None
                     if style_json or comment_text:
                         db.add(WorkspaceCell(
@@ -540,13 +542,13 @@ async def import_workspace_xlsx(
                         ))
                     continue
                 raw = cell.value
-                style_json = _extract_cell_style(cell)
+                style_json = _extract_cell_style(cell, theme_colors)
                 comment_text = cell.comment.text.strip() if cell.comment else None
                 if cell.data_type == 'f' or (isinstance(raw, str) and raw.startswith("=")):
                     raw_str = str(raw)
                     val = raw_str if raw_str.startswith("=") else "=" + raw_str
                 else:
-                    val = str(raw)
+                    val = _stringify_value(raw)
                 db.add(WorkspaceCell(
                     id=str(uuid.uuid4()),
                     sheet_id=ws_sheet.id,
@@ -604,14 +606,7 @@ async def export_workspace_xlsx(
         for c in cells:
             val = c.value
             if val is not None and not val.startswith("="):
-                # 선행 0이 있는 문자열("00123" 등)은 텍스트로 유지
-                if len(val) > 1 and val.startswith("0") and val != "0" and not val.startswith("0."):
-                    pass  # keep as string to preserve leading zeros
-                else:
-                    try:
-                        val = int(val) if "." not in val else float(val)
-                    except (ValueError, TypeError):
-                        pass
+                val = _parse_value_for_excel(val)
             excel_cell = excel_ws.cell(row=c.row_index + 1, column=c.col_index + 1, value=val)
             _apply_cell_style(excel_cell, c.style)
             if c.comment:

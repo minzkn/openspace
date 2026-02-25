@@ -4,6 +4,8 @@ import io
 import json
 import re
 import uuid
+import xml.etree.ElementTree as _ET
+from datetime import datetime as _datetime, date as _date, time as _time, timedelta as _td
 from typing import Optional
 from urllib.parse import quote as url_quote
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
@@ -74,29 +76,182 @@ class MergesUpdate(BaseModel):
     merges: list[str]   # list of xlsx range strings e.g. ["A1:B2", "C3:D4"]
 
 
+# ── Theme & color helpers ────────────────────────────────────
+def _get_theme_colors(wb) -> list[str]:
+    """워크북 테마 색상 팔레트 추출. theme index → 6자리 RGB hex (대문자)."""
+    # 기본 Office 테마 (lt1, dk1, lt2, dk2, accent1-6, hlink, folHlink)
+    defaults = ['FFFFFF', '000000', 'E7E6E6', '44546A',
+                '4472C4', 'ED7D31', 'A5A5A5', 'FFC000',
+                '5B9BD5', '70AD47', '0563C1', '954F72']
+    try:
+        theme_xml = wb.loaded_theme
+        if not theme_xml:
+            return defaults
+        ns = {'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'}
+        root = _ET.fromstring(theme_xml)
+        scheme = root.find('.//a:themeElements/a:clrScheme', ns)
+        if scheme is None:
+            return defaults
+        # XML 순서: dk1, lt1, dk2, lt2, accent1-6, hlink, folHlink
+        tag_order = ['dk1', 'lt1', 'dk2', 'lt2',
+                     'accent1', 'accent2', 'accent3', 'accent4',
+                     'accent5', 'accent6', 'hlink', 'folHlink']
+        parsed: list[str] = []
+        for tag in tag_order:
+            el = scheme.find(f'a:{tag}', ns)
+            if el is not None:
+                srgb = el.find('a:srgbClr', ns)
+                sys_clr = el.find('a:sysClr', ns)
+                if srgb is not None:
+                    parsed.append(srgb.get('val', '000000').upper())
+                elif sys_clr is not None:
+                    parsed.append(sys_clr.get('lastClr', '000000').upper())
+                else:
+                    parsed.append(defaults[len(parsed)] if len(parsed) < len(defaults) else '000000')
+            else:
+                parsed.append(defaults[len(parsed)] if len(parsed) < len(defaults) else '000000')
+        # Excel theme index ↔ clrScheme 순서 스왑: (dk1,lt1,dk2,lt2) → (lt1,dk1,lt2,dk2)
+        if len(parsed) >= 4:
+            parsed[0], parsed[1] = parsed[1], parsed[0]
+            parsed[2], parsed[3] = parsed[3], parsed[2]
+        return parsed
+    except Exception:
+        return defaults
+
+
+def _apply_tint(rgb_hex: str, tint: float) -> str:
+    """Excel tint 적용. tint: -1.0(어둡게) ~ 1.0(밝게)."""
+    if abs(tint) < 0.001:
+        return rgb_hex.upper()
+    r, g, b = int(rgb_hex[0:2], 16), int(rgb_hex[2:4], 16), int(rgb_hex[4:6], 16)
+    if tint < 0:
+        factor = 1.0 + tint
+        r, g, b = int(r * factor), int(g * factor), int(b * factor)
+    else:
+        r = int(r + (255 - r) * tint)
+        g = int(g + (255 - g) * tint)
+        b = int(b + (255 - b) * tint)
+    return f"{min(255, max(0, r)):02X}{min(255, max(0, g)):02X}{min(255, max(0, b)):02X}"
+
+
+def _resolve_color(color_obj, theme_colors: list[str] | None = None) -> str | None:
+    """openpyxl Color → 6자리 RGB hex (대문자). 실패 시 None."""
+    if color_obj is None:
+        return None
+    try:
+        if color_obj.type == 'rgb':
+            rgb = color_obj.rgb or ''
+            if len(rgb) >= 6:
+                return rgb[-6:].upper()
+        elif color_obj.type == 'theme' and theme_colors:
+            idx = color_obj.theme
+            tint = color_obj.tint or 0.0
+            if idx is not None and 0 <= idx < len(theme_colors):
+                return _apply_tint(theme_colors[idx], tint)
+        elif color_obj.type == 'indexed':
+            idx = color_obj.indexed
+            if idx is not None:
+                try:
+                    from openpyxl.styles.colors import COLOR_INDEX
+                    if 0 <= idx < len(COLOR_INDEX):
+                        argb = COLOR_INDEX[idx]
+                        if len(argb) >= 6:
+                            return argb[-6:].upper()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return None
+
+
+_ISO_DT_RE = re.compile(r'^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}$')
+_ISO_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+
+
+def _parse_value_for_excel(val_str: str | None):
+    """DB 저장 문자열 → Excel에 적합한 Python 타입 변환."""
+    if val_str is None:
+        return None
+    if val_str.startswith("="):
+        return val_str
+    # 불리언
+    if val_str == 'TRUE':
+        return True
+    if val_str == 'FALSE':
+        return False
+    # 선행 0 보존 (텍스트 유지)
+    if len(val_str) > 1 and val_str[0] == '0' and val_str != '0' and not val_str.startswith('0.'):
+        return val_str
+    # 정수
+    try:
+        if '.' not in val_str and 'e' not in val_str.lower():
+            return int(val_str)
+    except (ValueError, TypeError):
+        pass
+    # 실수
+    try:
+        return float(val_str)
+    except (ValueError, TypeError):
+        pass
+    # datetime
+    if _ISO_DT_RE.match(val_str):
+        try:
+            return _datetime.fromisoformat(val_str.replace(' ', 'T'))
+        except ValueError:
+            pass
+    elif _ISO_DATE_RE.match(val_str):
+        try:
+            return _date.fromisoformat(val_str)
+        except ValueError:
+            pass
+    return val_str
+
+
+def _stringify_value(raw) -> str:
+    """openpyxl 셀 값 → 저장용 문자열."""
+    if isinstance(raw, bool):
+        return 'TRUE' if raw else 'FALSE'
+    if isinstance(raw, _datetime):
+        return raw.isoformat(sep=' ')
+    if isinstance(raw, _date):
+        return raw.isoformat()
+    if isinstance(raw, _time):
+        return raw.isoformat()
+    if isinstance(raw, _td):
+        total = int(raw.total_seconds())
+        h, rem = divmod(abs(total), 3600)
+        m, s = divmod(rem, 60)
+        sign = '-' if total < 0 else ''
+        return f"{sign}{h:02d}:{m:02d}:{s:02d}"
+    return str(raw)
+
+
 # ── Style helpers ─────────────────────────────────────────────
-def _extract_cell_style(cell) -> Optional[str]:
+def _extract_cell_style(cell, theme_colors=None) -> Optional[str]:
     """openpyxl cell → style JSON 문자열 (변경된 속성만)"""
     style: dict = {}
 
     # Font
     font = cell.font
     if font:
+        if font.name and font.name != 'Calibri':
+            style['fontName'] = font.name
         if font.bold:
             style['bold'] = True
         if font.italic:
             style['italic'] = True
         if font.underline and font.underline != 'none':
-            style['underline'] = True
+            # 밑줄 타입 보존: single, double, singleAccounting, doubleAccounting
+            style['underline'] = font.underline if isinstance(font.underline, str) else 'single'
         if font.strikethrough:
             style['strikethrough'] = True
         if font.size and font.size != 11:
             style['fontSize'] = font.size
+        # 폰트 색상: theme/indexed/rgb 모두 해석
         try:
-            if font.color and font.color.type == 'rgb':
-                rgb = font.color.rgb or ''
-                if len(rgb) >= 6 and rgb.upper() not in ('FF000000', '000000'):
-                    style['color'] = rgb[-6:].upper()
+            fc = _resolve_color(font.color, theme_colors)
+            if fc and fc != '000000':
+                style['color'] = fc
         except Exception:
             pass
 
@@ -104,11 +259,10 @@ def _extract_cell_style(cell) -> Optional[str]:
     fill = cell.fill
     if fill and getattr(fill, 'fill_type', None) and fill.fill_type != 'none':
         try:
-            fg = fill.fgColor
-            if fg and fg.type == 'rgb':
-                rgb = fg.rgb or ''
-                if len(rgb) >= 6 and rgb.upper() not in ('00000000', 'FFFFFFFF', 'FF000000'):
-                    style['bg'] = rgb[-6:].upper()
+            fg = _resolve_color(fill.fgColor, theme_colors)
+            if fg and fg != 'FFFFFF':
+                # 검정(000000) 배경도 유효 → 제외하지 않음
+                style['bg'] = fg
         except Exception:
             pass
 
@@ -121,6 +275,10 @@ def _extract_cell_style(cell) -> Optional[str]:
             style['valign'] = align.vertical
         if align.wrap_text:
             style['wrap'] = True
+        if align.indent and align.indent > 0:
+            style['indent'] = align.indent
+        if align.text_rotation and align.text_rotation != 0:
+            style['textRotation'] = align.text_rotation
 
     # Border
     border = cell.border
@@ -131,8 +289,8 @@ def _extract_cell_style(cell) -> Optional[str]:
             if side and side.border_style and side.border_style != 'none':
                 entry: dict = {'style': side.border_style}
                 try:
-                    if side.color and side.color.type == 'rgb':
-                        entry['color'] = side.color.rgb[-6:].upper()
+                    bc = _resolve_color(side.color, theme_colors)
+                    entry['color'] = bc if bc else '000000'
                 except Exception:
                     entry['color'] = '000000'
                 borders[side_name] = entry
@@ -164,12 +322,16 @@ def _apply_cell_style(ws_cell, style_json: Optional[str]) -> None:
 
     # Font
     font_kwargs: dict = {}
+    if style.get('fontName'):
+        font_kwargs['name'] = style['fontName']
     if style.get('bold'):
         font_kwargs['bold'] = True
     if style.get('italic'):
         font_kwargs['italic'] = True
-    if style.get('underline'):
-        font_kwargs['underline'] = 'single'
+    ul = style.get('underline')
+    if ul:
+        # 하위호환: bool(True) 또는 문자열('single','double',...)
+        font_kwargs['underline'] = ul if isinstance(ul, str) else 'single'
     if style.get('strikethrough'):
         font_kwargs['strike'] = True
     if style.get('fontSize'):
@@ -188,13 +350,16 @@ def _apply_cell_style(ws_cell, style_json: Optional[str]) -> None:
     if style.get('align'):
         align_kwargs['horizontal'] = style['align']
     if style.get('valign'):
-        # CSS 'middle' → Excel 'center' 변환
         va = style['valign']
         if va == 'middle':
             va = 'center'
         align_kwargs['vertical'] = va
     if style.get('wrap'):
         align_kwargs['wrap_text'] = True
+    if style.get('indent'):
+        align_kwargs['indent'] = style['indent']
+    if style.get('textRotation'):
+        align_kwargs['text_rotation'] = style['textRotation']
     if align_kwargs:
         ws_cell.alignment = Alignment(**align_kwargs)
 
@@ -214,6 +379,8 @@ def _apply_cell_style(ws_cell, style_json: Optional[str]) -> None:
 def _style_to_css(style: dict) -> str:
     """style dict → CSS 문자열"""
     parts = []
+    if style.get('fontName'):
+        parts.append(f"font-family:{style['fontName']}")
     if style.get('bold'):
         parts.append('font-weight:bold')
     if style.get('italic'):
@@ -234,18 +401,26 @@ def _style_to_css(style: dict) -> str:
     if style.get('align'):
         parts.append(f"text-align:{style['align']}")
     if style.get('valign'):
-        # Excel 'center' → CSS 'middle' 변환
         va = style['valign']
         if va == 'center':
             va = 'middle'
         parts.append(f"vertical-align:{va}")
     if style.get('wrap'):
         parts.append('white-space:pre-wrap')
+    if style.get('indent'):
+        px = int(style['indent']) * 8
+        parts.append(f"padding-left:{px}px")
+    if style.get('textRotation'):
+        parts.append(f"--text-rotation:{style['textRotation']}")
     if style.get('border'):
         width_map = {'thin': '1px', 'medium': '2px', 'thick': '3px',
-                     'dashed': '1px', 'dotted': '1px', 'double': '3px'}
+                     'hair': '1px', 'dashed': '1px', 'dotted': '1px', 'double': '3px',
+                     'mediumDashed': '2px', 'dashDot': '1px', 'mediumDashDot': '2px',
+                     'dashDotDot': '1px', 'mediumDashDotDot': '2px', 'slantDashDot': '2px'}
         style_map = {'thin': 'solid', 'medium': 'solid', 'thick': 'solid',
-                     'dashed': 'dashed', 'dotted': 'dotted', 'double': 'double'}
+                     'hair': 'solid', 'dashed': 'dashed', 'dotted': 'dotted', 'double': 'double',
+                     'mediumDashed': 'dashed', 'dashDot': 'dashed', 'mediumDashDot': 'dashed',
+                     'dashDotDot': 'dashed', 'mediumDashDotDot': 'dashed', 'slantDashDot': 'dashed'}
         for side, bd in style['border'].items():
             bs = bd.get('style', 'thin')
             color = bd.get('color', '000000')
@@ -884,6 +1059,9 @@ async def import_template_xlsx(
     if len(wb.sheetnames) > MAX_SHEETS:
         raise HTTPException(status_code=400, detail=f"Too many sheets (max {MAX_SHEETS})")
 
+    # 테마 색상 팔레트 추출 (theme 색상 해석용)
+    theme_colors = _get_theme_colors(wb)
+
     template_name = name or (file.filename or "Imported").replace(".xlsx", "")
     t = Template(id=str(uuid.uuid4()), name=template_name, created_by=current_user.id)
     db.add(t)
@@ -946,7 +1124,7 @@ async def import_template_xlsx(
                 cell = row[ci] if ci < len(row) else None
                 if cell is None or cell.value is None:
                     # 값 없어도 스타일이나 메모 있으면 저장
-                    style_json = _extract_cell_style(cell) if cell else None
+                    style_json = _extract_cell_style(cell, theme_colors) if cell else None
                     comment_text = cell.comment.text.strip() if cell and cell.comment else None
                     if style_json or comment_text:
                         db.add(TemplateCell(
@@ -956,7 +1134,7 @@ async def import_template_xlsx(
                         ))
                     continue
                 raw = cell.value
-                style_json = _extract_cell_style(cell)
+                style_json = _extract_cell_style(cell, theme_colors)
                 comment_text = cell.comment.text.strip() if cell.comment else None
                 if cell.data_type == 'f' or (isinstance(raw, str) and raw.startswith("=")):
                     raw_str = str(raw)
@@ -971,7 +1149,7 @@ async def import_template_xlsx(
                     db.add(TemplateCell(
                         id=str(uuid.uuid4()), sheet_id=new_sheet.id,
                         row_index=ri, col_index=ci,
-                        value=str(raw), style=style_json,
+                        value=_stringify_value(raw), style=style_json,
                         comment=comment_text,
                     ))
 
@@ -1022,14 +1200,7 @@ async def export_template_xlsx(
                 if c:
                     val = c.formula if c.formula else c.value
                     if val is not None and not val.startswith("="):
-                        # 선행 0이 있는 문자열("00123" 등)은 텍스트로 유지
-                        if len(val) > 1 and val.startswith("0") and val != "0" and not val.startswith("0."):
-                            pass  # keep as string to preserve leading zeros
-                        else:
-                            try:
-                                val = int(val) if "." not in val else float(val)
-                            except (ValueError, TypeError):
-                                pass
+                        val = _parse_value_for_excel(val)
                     ws_cell = ws.cell(row=ri + 1, column=ci + 1, value=val)
                     _apply_cell_style(ws_cell, c.style)
                     if c.comment:

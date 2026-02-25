@@ -229,6 +229,10 @@ CREATE TABLE template_sheets (
     template_id  TEXT NOT NULL REFERENCES templates(id) ON DELETE CASCADE,
     sheet_index  INTEGER NOT NULL,           -- 0-based
     sheet_name   TEXT NOT NULL,
+    merges       TEXT,                       -- JSON 병합 범위 목록 ["A1:B2","C3:D4"]
+    row_heights  TEXT,                       -- JSON 행 높이 {"row_index": pt값}
+    freeze_panes TEXT,                       -- xlsx 틀 고정 문자열 (e.g. "B2")
+    conditional_formats TEXT,                -- JSON 조건부 서식 규칙 배열
     UNIQUE (template_id, sheet_index)
 );
 ```
@@ -260,7 +264,8 @@ CREATE TABLE template_cells (
     col_index   INTEGER NOT NULL,            -- 0-based
     value       TEXT,
     formula     TEXT,                        -- Excel 수식 (선택)
-    style       TEXT,                        -- JSON: 배경색, 글꼴 등
+    style       TEXT,                        -- JSON: 폰트·색상·배경·테두리·정렬·들여쓰기·회전 등
+    comment     TEXT,                        -- 셀 메모/코멘트
     UNIQUE (sheet_id, row_index, col_index)
 );
 ```
@@ -271,7 +276,7 @@ CREATE TABLE template_cells (
 CREATE TABLE workspaces (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
-    template_id  TEXT NOT NULL REFERENCES templates(id),
+    template_id  TEXT REFERENCES templates(id) ON DELETE SET NULL,
     status       TEXT NOT NULL DEFAULT 'OPEN'
                  CHECK (status IN ('OPEN','CLOSED')),
     created_by   TEXT NOT NULL REFERENCES users(id),
@@ -288,9 +293,13 @@ CREATE TABLE workspaces (
 CREATE TABLE workspace_sheets (
     id              TEXT PRIMARY KEY,
     workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    template_sheet_id TEXT NOT NULL REFERENCES template_sheets(id),
+    template_sheet_id TEXT REFERENCES template_sheets(id) ON DELETE SET NULL,
     sheet_index     INTEGER NOT NULL,
     sheet_name      TEXT NOT NULL,
+    merges          TEXT,                    -- JSON 병합 범위 목록
+    row_heights     TEXT,                    -- JSON 행 높이
+    freeze_panes    TEXT,                    -- xlsx 틀 고정 문자열
+    conditional_formats TEXT,                -- JSON 조건부 서식 규칙 배열
     UNIQUE (workspace_id, sheet_index)
 );
 ```
@@ -304,7 +313,8 @@ CREATE TABLE workspace_cells (
     row_index   INTEGER NOT NULL,
     col_index   INTEGER NOT NULL,
     value       TEXT,
-    style       TEXT,                        -- JSON
+    style       TEXT,                        -- JSON: 폰트·색상·배경·테두리·정렬·들여쓰기·회전 등
+    comment     TEXT,                        -- 셀 메모/코멘트
     updated_by  TEXT REFERENCES users(id),
     updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     UNIQUE (sheet_id, row_index, col_index)
@@ -494,11 +504,15 @@ Referrer-Policy: strict-origin-when-cross-origin
 2. 매직 바이트 검증 (PK\x03\x04)
 3. openpyxl.load_workbook() 로드
 4. 시트 수 ≤ 64 검증
-5. 각 시트:
-   a. template_sheets INSERT
-   b. 1행을 컬럼 헤더로 파싱 → template_columns INSERT
-   c. 2행~10001행 데이터 → template_cells INSERT (배치)
-6. 트랜잭션 커밋
+5. _get_theme_colors(wb) → 테마 색상 팔레트 추출
+6. 각 시트:
+   a. template_sheets INSERT (merges, row_heights, freeze_panes 포함)
+   b. 컬럼 헤더 = Excel 열 문자(A,B,C...) → template_columns INSERT
+   c. 1행~10000행 데이터 → template_cells INSERT (배치)
+      - _extract_cell_style(cell, theme_colors) → 스타일 JSON 추출
+      - _stringify_value(raw) → 값 문자열화 (datetime→ISO, bool→TRUE/FALSE)
+   d. row_index=0 부터 시작 (헤더 행 건너뜀 없음)
+7. 트랜잭션 커밋
 ```
 
 #### 다운로드 (DB → .xlsx)
@@ -506,12 +520,34 @@ Referrer-Policy: strict-origin-when-cross-origin
 ```
 1. template_sheets 조회 → openpyxl Workbook 생성
 2. 각 시트:
-   a. 1행: template_columns 헤더 기록
-   b. 2행~: template_cells 데이터 기록
-   c. 컬럼 너비 적용
-   d. readonly 컬럼: 셀 잠금 + 보호 (openpyxl protection)
+   a. template_cells 데이터를 row=row_index+1 위치에 기록 (헤더 행 없음)
+   b. _parse_value_for_excel(val) → 값 타입 복원 (ISO→datetime, TRUE/FALSE→bool)
+   c. _apply_cell_style(ws_cell, style_json) → 스타일 적용
+      (fontName, bold, italic, underline type, color, bg, align, valign,
+       wrap, indent, textRotation, border, numFmt, fontSize, strikethrough)
+   d. 컬럼 너비 적용
+   e. merges 복원 (ws.merge_cells)
+   f. row_heights 복원 (pt 단위)
+   g. freeze_panes 복원
+   h. readonly 컬럼: 셀 잠금 + 보호 (openpyxl protection)
 3. BytesIO 스트리밍 응답
 ```
+
+#### 스타일 헬퍼 함수 (app/routers/templates.py)
+
+| 함수 | 설명 |
+|------|------|
+| `_get_theme_colors(wb)` | 워크북 XML에서 테마 색상 팔레트(dk1/lt1/dk2/lt2/accent1-6) 추출 |
+| `_apply_tint(rgb_hex, tint)` | Excel tint(-1.0~1.0) 적용: 음수=어둡게, 양수=밝게 |
+| `_resolve_color(color_obj, theme_colors)` | openpyxl Color → 6자리 RGB hex (rgb/theme/indexed 타입 지원) |
+| `_extract_cell_style(cell, theme_colors)` | 셀 → 스타일 JSON dict 추출 |
+| `_apply_cell_style(ws_cell, style_json)` | 스타일 JSON → openpyxl 셀에 적용 |
+| `_style_to_css(style)` | 스타일 JSON → CSS 문자열 변환 |
+| `_stringify_value(raw)` | openpyxl 값 → DB 저장용 문자열 (datetime→ISO, bool→TRUE/FALSE) |
+| `_parse_value_for_excel(val_str)` | DB 문자열 → Python 타입 (int/float/datetime/date/bool) |
+| `_range_to_jss(merge_range)` | xlsx 범위 문자열 → jspreadsheet 병합 형식 |
+| `_freeze_to_cols(freeze_str)` | freeze_panes 문자열 → freeze_columns 수 |
+| `_pt_to_px(pt)` | pt → px 변환 |
 
 ### 7.2 Workspace 생성
 
@@ -526,13 +562,17 @@ Referrer-Policy: strict-origin-when-cross-origin
 ### 7.3 Workspace Excel 업로드 (관리자)
 
 - OPEN/CLOSED 상태 불문 관리자는 업로드 가능
+- `_get_theme_colors(wb)` → 테마 색상 추출 후 스타일/값 처리
 - 업로드된 xlsx → workspace_cells 전체 덮어쓰기 (트랜잭션)
+- merges, row_heights, freeze_panes 시트 메타도 갱신
 - WebSocket으로 모든 접속 클라이언트에 `reload` 이벤트 브로드캐스트
 
 ### 7.4 Workspace Excel 다운로드
 
 - 현재 workspace_cells 상태를 xlsx로 다운로드
 - 컬럼 헤더는 template_columns에서 가져옴
+- `_parse_value_for_excel()` + `_apply_cell_style()` 로 값/스타일 복원
+- merges, row_heights, freeze_panes 시트 메타 적용
 
 ### 7.5 사용자 계정 Excel 업로드/다운로드
 
@@ -914,9 +954,10 @@ openspace/
 │   │   ├── users.html
 │   │   ├── user_fields.html
 │   │   ├── templates.html
+│   │   ├── template_edit.html # Template Jspreadsheet 편집 화면
 │   │   ├── workspaces.html    # 관리자 Workspace 관리
 │   │   ├── workspace_list.html # USER용 목록
-│   │   └── workspace.html     # Jspreadsheet 편집 화면
+│   │   └── workspace.html     # Workspace Jspreadsheet 편집 화면
 │   └── static/
 │       ├── css/
 │       │   └── style.css
@@ -928,13 +969,18 @@ openspace/
 │       │   └── jspreadsheet-formula.js  # @jspreadsheet/formula v2
 │       └── js/
 │           ├── common.js
+│           ├── spreadsheet_core.js  # 공통 스프레드시트 유틸 (포맷 툴바 등)
 │           ├── workspace.js
+│           ├── template_edit.js     # Template 편집 화면 JS
 │           ├── users.js
+│           ├── user_fields.js
 │           ├── templates.js
 │           └── workspaces.js
 │
 ├── migrations/
-│   └── 001_initial.sql        # 초기 스키마 + SUPER_ADMIN INSERT
+│   ├── 001_initial.sql        # 초기 스키마 + SUPER_ADMIN INSERT
+│   ├── 002_nullable_template_fk.sql  # workspaces/workspace_sheets FK → ON DELETE SET NULL
+│   └── 003_sheet_meta.sql     # template_sheets/workspace_sheets에 merges, row_heights, freeze_panes 추가
 │
 ├── init_db.py                 # DB 파일 생성 + 스키마 적용 + 초기 데이터
 ├── start.sh                   # 전체 시작 스크립트
@@ -1298,5 +1344,5 @@ function connectWebSocket(workspaceId) {
 
 ---
 
-*최종 수정: 2026-02-24*
+*최종 수정: 2026-02-25*
 *기반 문서: REQUIREMENTS.md*

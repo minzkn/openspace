@@ -117,8 +117,10 @@ const ctx = {
   },
   onRowInsert: (rowIndex, direction) => { insertRowApi(rowIndex, direction); },
   onRowDelete: (rowIndex) => { deleteRowApi(rowIndex); },
+  onRowsDelete: (rowIndices) => { deleteRowsApi(rowIndices); },
   onColumnInsert: (colIndex, direction) => { insertColApi(colIndex, direction); },
   onColumnDelete: (colIndex) => { deleteColApi(colIndex); },
+  onColumnsDelete: (colIndices) => { deleteColsApi(colIndices); },
   onCommentChange: (row, col, comment) => { saveComment(row, col, comment); },
   undoManager: new SpreadsheetCore.UndoManager(),
 };
@@ -703,6 +705,23 @@ async function deleteRowApi(rowIndex) {
   }
 }
 
+async function deleteRowsApi(rowIndices) {
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  // 로컬: 뒤에서부터 삭제 (인덱스 밀림 방지)
+  for (let i = rowIndices.length - 1; i >= 0; i--) {
+    try { spreadsheet.deleteRow(rowIndices[i]); } catch(e) {}
+  }
+  const res = await apiFetch(
+    `/api/workspaces/${workspaceData.id}/sheets/${sheet.id}/rows/delete`,
+    { method: 'POST', body: JSON.stringify({ row_indices: rowIndices }) }
+  );
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast(e.detail || '행 삭제 실패', 'error');
+  }
+}
+
 // ── 열 삽입/삭제 API ──────────────────────────────────────────
 async function insertColApi(colIndex, direction) {
   const sheet = sheets[currentSheetIndex];
@@ -727,18 +746,21 @@ async function insertColApi(colIndex, direction) {
 }
 
 async function deleteColApi(colIndex) {
+  deleteColsApi([colIndex]);
+}
+
+async function deleteColsApi(colIndices) {
   const sheet = sheets[currentSheetIndex];
   if (!sheet) return;
-  try {
-    spreadsheet.deleteColumn(colIndex);
-    SpreadsheetCore.refreshColumnHeaders(ctx);
-  } catch(e) {
-    console.error('deleteColumn error:', e);
-    showToast('열 삭제 실패 (로컬): ' + e.message, 'error');
+  // 로컬: 뒤에서부터 삭제 (인덱스 밀림 방지)
+  const sorted = colIndices.slice().sort((a, b) => b - a);
+  for (const ci of sorted) {
+    try { spreadsheet.deleteColumn(ci); } catch(e) {}
   }
+  SpreadsheetCore.refreshColumnHeaders(ctx);
   const res = await apiFetch(
     `/api/workspaces/${workspaceData.id}/sheets/${sheet.id}/cols/delete`,
-    { method: 'POST', body: JSON.stringify({ col_indices: [colIndex] }) }
+    { method: 'POST', body: JSON.stringify({ col_indices: colIndices }) }
   );
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));

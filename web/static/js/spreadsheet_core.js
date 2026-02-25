@@ -982,8 +982,13 @@ function buildContextMenu(ctx) {
         else obj.insertRow(1, cy, false);
       }});
       items.push({ title: '행 삭제', onclick: function() {
-        if (ctx.onRowDelete) ctx.onRowDelete(cy);
-        else obj.deleteRow(cy);
+        var sel = ctx.getSelection();
+        var rows = [];
+        if (sel) for (var r = sel.y1; r <= sel.y2; r++) rows.push(r);
+        else rows.push(cy);
+        if (ctx.onRowsDelete) ctx.onRowsDelete(rows);
+        else if (ctx.onRowDelete) { for (var i = rows.length - 1; i >= 0; i--) ctx.onRowDelete(rows[i]); }
+        else { for (var i = rows.length - 1; i >= 0; i--) obj.deleteRow(rows[i]); }
       }});
     }
 
@@ -998,8 +1003,13 @@ function buildContextMenu(ctx) {
         else obj.insertColumn(1, cx, false);
       }});
       items.push({ title: '열 삭제', onclick: function() {
-        if (ctx.onColumnDelete) ctx.onColumnDelete(cx);
-        else obj.deleteColumn(cx);
+        var sel = ctx.getSelection();
+        var cols = [];
+        if (sel) for (var c = sel.x1; c <= sel.x2; c++) cols.push(c);
+        else cols.push(cx);
+        if (ctx.onColumnsDelete) ctx.onColumnsDelete(cols);
+        else if (ctx.onColumnDelete) { for (var i = cols.length - 1; i >= 0; i--) ctx.onColumnDelete(cols[i]); }
+        else { for (var i = cols.length - 1; i >= 0; i--) obj.deleteColumn(cols[i]); }
       }});
     }
 

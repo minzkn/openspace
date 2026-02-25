@@ -105,6 +105,14 @@ const ctx = {
     ss.deleteRow(rowIndex);
     saveAllCells();
   },
+  onRowsDelete: (rowIndices) => {
+    const ss = ctx.getSpreadsheet();
+    if (!ss) return;
+    for (let i = rowIndices.length - 1; i >= 0; i--) {
+      ss.deleteRow(rowIndices[i]);
+    }
+    saveAllCells();
+  },
   onColumnInsert: (colIndex, direction) => {
     const ss = ctx.getSpreadsheet();
     if (!ss) return;
@@ -116,6 +124,14 @@ const ctx = {
     const ss = ctx.getSpreadsheet();
     if (!ss) return;
     ss.deleteColumn(colIndex);
+    SpreadsheetCore.refreshColumnHeaders(ctx);
+    saveAllCells();
+  },
+  onColumnsDelete: (colIndices) => {
+    const ss = ctx.getSpreadsheet();
+    if (!ss) return;
+    const sorted = colIndices.slice().sort((a, b) => b - a);
+    for (const ci of sorted) { ss.deleteColumn(ci); }
     SpreadsheetCore.refreshColumnHeaders(ctx);
     saveAllCells();
   },

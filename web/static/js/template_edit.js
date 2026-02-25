@@ -109,12 +109,14 @@ const ctx = {
     const ss = ctx.getSpreadsheet();
     if (!ss) return;
     ss.insertColumn(1, colIndex, direction === 'before');
+    SpreadsheetCore.refreshColumnHeaders(ctx);
     saveAllCells();
   },
   onColumnDelete: (colIndex) => {
     const ss = ctx.getSpreadsheet();
     if (!ss) return;
     ss.deleteColumn(colIndex);
+    SpreadsheetCore.refreshColumnHeaders(ctx);
     saveAllCells();
   },
   undoManager: new SpreadsheetCore.UndoManager(),

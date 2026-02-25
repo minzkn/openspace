@@ -711,6 +711,7 @@ async function insertColApi(colIndex, direction) {
   // insertBefore=1 → 왼쪽, insertBefore=0 → 오른쪽
   try {
     spreadsheet.insertColumn(1, colIndex, direction === 'before' ? 1 : 0);
+    SpreadsheetCore.refreshColumnHeaders(ctx);
   } catch(e) {
     console.error('insertColumn error:', e);
     showToast('열 삽입 실패 (로컬): ' + e.message, 'error');
@@ -730,6 +731,7 @@ async function deleteColApi(colIndex) {
   if (!sheet) return;
   try {
     spreadsheet.deleteColumn(colIndex);
+    SpreadsheetCore.refreshColumnHeaders(ctx);
   } catch(e) {
     console.error('deleteColumn error:', e);
     showToast('열 삭제 실패 (로컬): ' + e.message, 'error');
@@ -760,6 +762,7 @@ function handleRemoteColOp(msg) {
         try { spreadsheet.deleteColumn(indices[i]); } catch(e) {}
       }
     }
+    SpreadsheetCore.refreshColumnHeaders(ctx);
   } finally {
     _suppressOnChange = false;
   }

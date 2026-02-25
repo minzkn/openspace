@@ -1470,6 +1470,23 @@ function printSpreadsheet() {
   window.print();
 }
 
+// ── 열 헤더 갱신 ─────────────────────────────────────────────
+// 열 삽입/삭제 후 jspreadsheet 헤더를 A, B, C... 순서로 재설정
+function refreshColumnHeaders(ctx) {
+  var ss = ctx.getSpreadsheet();
+  if (!ss) return;
+  var headers = ss.headers || [];
+  var cols = ss.options.columns || [];
+  for (var i = 0; i < headers.length; i++) {
+    var letter = colIndexToLetter(i);
+    if (headers[i]) {
+      headers[i].textContent = letter;
+      headers[i].setAttribute('title', letter);
+    }
+    if (cols[i]) cols[i].title = letter;
+  }
+}
+
 // ============================================================
 // ── 공개 API ────────────────────────────────────────────────
 // ============================================================
@@ -1541,6 +1558,8 @@ return {
   reapplyConditionalFormats,
   // Print
   printSpreadsheet,
+  // Column headers
+  refreshColumnHeaders,
 };
 
 })();

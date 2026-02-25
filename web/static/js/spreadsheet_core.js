@@ -938,14 +938,18 @@ function buildContextMenu(ctx) {
     var cx = (x !== null && x !== undefined) ? parseInt(x) : null;
     var cy = (y !== null && y !== undefined) ? parseInt(y) : null;
 
-    // 잘라내기 / 복사 / 붙여넣기
-    items.push({ title: '잘라내기', onclick: function() { obj.cut(); } });
+    // 복사 (항상 허용) / 잘라내기·붙여넣기 (편집 가능 시에만)
+    if (ctx.isEditable()) {
+      items.push({ title: '잘라내기', onclick: function() { obj.cut(); } });
+    }
     items.push({ title: '복사', onclick: function() { obj.copy(); } });
-    items.push({ title: '붙여넣기', onclick: function() {
-      navigator.clipboard.readText().then(function(text) {
-        if (text) obj.paste(obj.selectedCell[0], obj.selectedCell[1], text);
-      }).catch(function() {});
-    }});
+    if (ctx.isEditable()) {
+      items.push({ title: '붙여넣기', onclick: function() {
+        navigator.clipboard.readText().then(function(text) {
+          if (text) obj.paste(obj.selectedCell[0], obj.selectedCell[1], text);
+        }).catch(function() {});
+      }});
+    }
 
     if (ctx.isEditable() && cy !== null && !isNaN(cy)) {
       items.push({ type: 'line' }); // separator
@@ -1016,6 +1020,13 @@ function buildContextMenu(ctx) {
 function sortColumn(ctx, colIdx, ascending) {
   const ss = ctx.getSpreadsheet();
   if (!ss) return;
+  // 병합 셀이 있으면 정렬 시 데이터 손상 가능 → 경고
+  try {
+    var merges = ss.getMerge();
+    if (merges && Object.keys(merges).length > 0) {
+      if (!confirm('병합된 셀이 있어 정렬 시 데이터가 손상될 수 있습니다.\n계속하시겠습니까?')) return;
+    }
+  } catch(e) {}
   const data = ss.getData();
   if (!data || data.length === 0) return;
 

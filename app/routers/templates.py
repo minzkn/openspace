@@ -890,7 +890,10 @@ async def import_template_xlsx(
             continue
 
         first_row = all_rows[0]
-        num_cols = max((i for i, cell in enumerate(first_row) if cell.value is not None), default=-1) + 1
+        # xlsx 전체 시트의 최대 컬럼 수 사용 (첫 행만 보면 뒤쪽 행의 데이터 누락 가능)
+        num_cols = ws.max_column or 0
+        if num_cols == 0:
+            num_cols = max((i for i, cell in enumerate(first_row) if cell.value is not None), default=-1) + 1
         if num_cols == 0:
             num_cols = len(first_row) if first_row else 5
 

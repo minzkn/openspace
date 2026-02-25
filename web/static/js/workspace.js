@@ -416,6 +416,7 @@ function handlePaste(instance, data) {
   // onbeforepaste에서 _suppressOnChange=true 설정 → handleCellChange 중복 방지
   clearTimeout(window._pasteResetTimer);
   _suppressOnChange = false;
+  if (isClosed && !IS_ADMIN) return;
   const sheet = sheets[currentSheetIndex];
   if (!sheet) return;
   const patches = [];
@@ -565,6 +566,7 @@ function handleWsMessage(msg) {
     return;
   }
   if (msg.type === 'reload') {
+    flushPatches();  // 대기 중인 변경사항 즉시 전송
     showToast('데이터가 업로드되었습니다. 새로고침합니다.', 'info');
     setTimeout(() => loadSheet(currentSheetIndex), 800);
     return;

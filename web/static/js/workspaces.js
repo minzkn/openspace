@@ -15,11 +15,13 @@ async function loadWorkspaces() {
 function renderTable(workspaces) {
   const tbody = document.getElementById('ws-tbody');
   if (!workspaces.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="loading">워크스페이스가 없습니다.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="loading">워크스페이스가 없습니다.</td></tr>';
+    updateSelection();
     return;
   }
   tbody.innerHTML = workspaces.map(w => `
     <tr>
+      <td><input type="checkbox" class="row-check" value="${w.id}" onchange="updateSelection()"></td>
       <td>
         <a href="/workspaces/${w.id}" style="color:var(--primary); font-weight:500">${esc(w.name)}</a>
       </td>
@@ -40,6 +42,42 @@ function renderTable(workspaces) {
       </td>
     </tr>
   `).join('');
+  updateSelection();
+}
+
+function toggleSelectAll(master) {
+  document.querySelectorAll('.row-check').forEach(cb => { cb.checked = master.checked; });
+  updateSelection();
+}
+
+function updateSelection() {
+  const checks = document.querySelectorAll('.row-check');
+  const checked = document.querySelectorAll('.row-check:checked');
+  const cnt = checked.length;
+  const bar = document.getElementById('batch-toolbar');
+  const cntEl = document.getElementById('sel-count');
+  const all = document.getElementById('select-all');
+  if (bar) bar.style.display = cnt > 0 ? '' : 'none';
+  if (cntEl) cntEl.textContent = cnt;
+  if (all) all.checked = checks.length > 0 && checks.length === cnt;
+}
+
+async function batchDeleteWorkspaces() {
+  const ids = Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.value);
+  if (!ids.length) return;
+  if (!confirm(`선택한 ${ids.length}개 워크스페이스를 삭제하시겠습니까?`)) return;
+  const res = await apiFetch('/api/admin/workspaces/batch-delete', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  });
+  if (res.ok) {
+    const { deleted } = await res.json();
+    showToast(`${deleted}개 워크스페이스가 삭제되었습니다`, 'success');
+    loadWorkspaces();
+  } else {
+    const err = await res.json();
+    showToast(err.detail || '일괄 삭제 실패', 'error');
+  }
 }
 
 async function showCreateWSModal() {

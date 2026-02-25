@@ -15,11 +15,13 @@ async function loadTemplates() {
 function renderTable(templates) {
   const tbody = document.getElementById('templates-tbody');
   if (!templates.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="loading">등록된 서식이 없습니다. xlsx 파일을 업로드하거나 새 서식을 만드세요.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="loading">등록된 서식이 없습니다. xlsx 파일을 업로드하거나 새 서식을 만드세요.</td></tr>';
+    updateSelection();
     return;
   }
   tbody.innerHTML = templates.map(t => `
     <tr>
+      <td><input type="checkbox" class="row-check" value="${t.id}" onchange="updateSelection()"></td>
       <td>
         <a href="/admin/templates/${t.id}/edit" style="color:var(--primary); font-weight:500">${esc(t.name)}</a>
       </td>
@@ -37,6 +39,42 @@ function renderTable(templates) {
       </td>
     </tr>
   `).join('');
+  updateSelection();
+}
+
+function toggleSelectAll(master) {
+  document.querySelectorAll('.row-check').forEach(cb => { cb.checked = master.checked; });
+  updateSelection();
+}
+
+function updateSelection() {
+  const checks = document.querySelectorAll('.row-check');
+  const checked = document.querySelectorAll('.row-check:checked');
+  const cnt = checked.length;
+  const bar = document.getElementById('batch-toolbar');
+  const cntEl = document.getElementById('sel-count');
+  const all = document.getElementById('select-all');
+  if (bar) bar.style.display = cnt > 0 ? '' : 'none';
+  if (cntEl) cntEl.textContent = cnt;
+  if (all) all.checked = checks.length > 0 && checks.length === cnt;
+}
+
+async function batchDeleteTemplates() {
+  const ids = Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.value);
+  if (!ids.length) return;
+  if (!confirm(`선택한 ${ids.length}개 서식을 삭제하시겠습니까?`)) return;
+  const res = await apiFetch('/api/admin/templates/batch-delete', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  });
+  if (res.ok) {
+    const { deleted } = await res.json();
+    showToast(`${deleted}개 서식이 삭제되었습니다`, 'success');
+    loadTemplates();
+  } else {
+    const err = await res.json();
+    showToast(err.detail || '일괄 삭제 실패', 'error');
+  }
 }
 
 function showCreateTemplateModal() {

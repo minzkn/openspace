@@ -612,6 +612,23 @@ async def delete_template(
     db.commit()
 
 
+class BatchDeleteRequest(BaseModel):
+    ids: list[str]
+
+
+@router.post("/batch-delete")
+async def batch_delete_templates(
+    body: BatchDeleteRequest,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    targets = db.query(Template).filter(Template.id.in_(body.ids)).all()
+    for t in targets:
+        db.delete(t)
+    db.commit()
+    return {"deleted": len(targets)}
+
+
 @router.post("/{template_id}/copy", status_code=201)
 async def copy_template(
     template_id: str,

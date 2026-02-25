@@ -205,6 +205,23 @@ async def delete_workspace(
     db.commit()
 
 
+class BatchDeleteRequest(BaseModel):
+    ids: list[str]
+
+
+@admin_router.post("/batch-delete")
+async def batch_delete_workspaces(
+    body: BatchDeleteRequest,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    targets = db.query(Workspace).filter(Workspace.id.in_(body.ids)).all()
+    for w in targets:
+        db.delete(w)
+    db.commit()
+    return {"deleted": len(targets)}
+
+
 @admin_router.post("/{workspace_id}/close")
 async def close_workspace(
     workspace_id: str,

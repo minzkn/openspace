@@ -3,10 +3,19 @@
 {% block page_title %}워크스페이스{% endblock %}
 
 {% block content %}
+{% if is_admin %}
+<div class="toolbar">
+  <div class="toolbar-left" id="batch-toolbar" style="display:none">
+    <button class="btn btn-danger" onclick="batchDeleteWorkspaces()">선택 삭제 (<span id="sel-count">0</span>)</button>
+  </div>
+</div>
+{% endif %}
+
 <div class="table-container">
   <table class="data-table">
     <thead>
       <tr>
+        {% if is_admin %}<th style="width:32px"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>{% endif %}
         <th>이름</th>
         <th>상태</th>
         <th>시트 수</th>
@@ -16,15 +25,61 @@
     <tbody>
       {% for ws in workspaces %}
       <tr>
+        {% if is_admin %}<td><input type="checkbox" class="row-check" value="{{ ws.id }}" onchange="updateSelection()"></td>{% endif %}
         <td><a href="/workspaces/{{ ws.id }}" style="color:var(--primary); font-weight:500">{{ ws.name }}</a></td>
         <td><span class="badge {{ ws.status|lower }}">{{ ws.status }}</span></td>
         <td>{{ ws.sheets|length }}</td>
         <td>{{ ws.created_at[:10] }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="4" class="loading">게시된 워크스페이스가 없습니다.</td></tr>
+      <tr><td colspan="{% if is_admin %}5{% else %}4{% endif %}" class="loading">게시된 워크스페이스가 없습니다.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% if is_admin %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.row-check, #select-all').forEach(cb => { cb.checked = false; });
+});
+
+function toggleSelectAll(master) {
+  document.querySelectorAll('.row-check').forEach(cb => { cb.checked = master.checked; });
+  updateSelection();
+}
+
+function updateSelection() {
+  const checks = document.querySelectorAll('.row-check');
+  const checked = document.querySelectorAll('.row-check:checked');
+  const cnt = checked.length;
+  const bar = document.getElementById('batch-toolbar');
+  const cntEl = document.getElementById('sel-count');
+  const all = document.getElementById('select-all');
+  if (bar) bar.style.display = cnt > 0 ? '' : 'none';
+  if (cntEl) cntEl.textContent = cnt;
+  if (all) all.checked = checks.length > 0 && checks.length === cnt;
+}
+
+async function batchDeleteWorkspaces() {
+  const ids = Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.value);
+  if (!ids.length) return;
+  if (!confirm(`선택한 ${ids.length}개 워크스페이스를 삭제하시겠습니까?`)) return;
+  const res = await apiFetch('/api/admin/workspaces/batch-delete', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  });
+  if (res.ok) {
+    const { deleted } = await res.json();
+    showToast(`${deleted}개 워크스페이스가 삭제되었습니다`, 'success');
+    location.reload();
+  } else {
+    const err = await res.json();
+    showToast(err.detail || '일괄 삭제 실패', 'error');
+  }
+}
+</script>
+{% endif %}
 {% endblock %}

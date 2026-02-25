@@ -4,6 +4,9 @@
 
 {% block content %}
 <div class="toolbar">
+  <div class="toolbar-left" id="batch-toolbar" style="display:none">
+    <button class="btn btn-danger" onclick="batchDeleteWorkspaces()">선택 삭제 (<span id="sel-count">0</span>)</button>
+  </div>
   <div class="toolbar-right">
     <button class="btn btn-primary" onclick="showCreateWSModal()">+ 새 워크스페이스</button>
   </div>
@@ -13,6 +16,7 @@
   <table class="data-table">
     <thead>
       <tr>
+        <th style="width:32px"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
         <th>이름</th>
         <th>상태</th>
         <th>시트 수</th>
@@ -21,7 +25,7 @@
       </tr>
     </thead>
     <tbody id="ws-tbody">
-      <tr><td colspan="5" class="loading">로딩 중...</td></tr>
+      <tr><td colspan="6" class="loading">로딩 중...</td></tr>
     </tbody>
   </table>
 </div>

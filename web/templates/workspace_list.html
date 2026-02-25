@@ -3,18 +3,28 @@
 {% block page_title %}워크스페이스{% endblock %}
 
 {% block content %}
-<div class="card-grid">
-  {% for ws in workspaces %}
-  <a href="/workspaces/{{ ws.id }}" class="ws-card {% if ws.status == 'OPEN' %}open{% else %}closed{% endif %}">
-    <div class="ws-card-name">{{ ws.name }}</div>
-    <div class="ws-card-meta">
-      <span class="badge {{ ws.status|lower }}">{{ ws.status }}</span>
-      <span>{{ ws.sheets|length }}개 시트</span>
-    </div>
-    <div class="ws-card-date">{{ ws.created_at[:10] }}</div>
-  </a>
-  {% else %}
-  <div class="empty-msg">게시된 워크스페이스가 없습니다.</div>
-  {% endfor %}
+<div class="table-container">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>이름</th>
+        <th>상태</th>
+        <th>시트 수</th>
+        <th>생성일</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for ws in workspaces %}
+      <tr>
+        <td><a href="/workspaces/{{ ws.id }}" style="color:var(--primary); font-weight:500">{{ ws.name }}</a></td>
+        <td><span class="badge {{ ws.status|lower }}">{{ ws.status }}</span></td>
+        <td>{{ ws.sheets|length }}</td>
+        <td>{{ ws.created_at[:10] }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="loading">게시된 워크스페이스가 없습니다.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
 {% endblock %}

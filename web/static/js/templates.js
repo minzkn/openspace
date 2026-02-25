@@ -9,31 +9,33 @@ async function loadTemplates() {
   const res = await apiFetch('/api/admin/templates');
   if (!res.ok) return;
   const { data: templates } = await res.json();
-  renderGrid(templates);
+  renderTable(templates);
 }
 
-function renderGrid(templates) {
-  const grid = document.getElementById('templates-grid');
+function renderTable(templates) {
+  const tbody = document.getElementById('templates-tbody');
   if (!templates.length) {
-    grid.innerHTML = '<div class="empty-msg">등록된 서식이 없습니다. xlsx 파일을 업로드하거나 새 서식을 만드세요.</div>';
+    tbody.innerHTML = '<tr><td colspan="5" class="loading">등록된 서식이 없습니다. xlsx 파일을 업로드하거나 새 서식을 만드세요.</td></tr>';
     return;
   }
-  grid.innerHTML = templates.map(t => `
-    <div class="ws-card" style="cursor:default">
-      <div class="ws-card-name">${esc(t.name)}</div>
-      <div class="ws-card-meta" style="margin-bottom:8px">
-        <span>${t.sheet_count}개 시트</span>
-        <span style="color:var(--text-muted); font-size:11px">${fmtDate(t.updated_at)}</span>
-      </div>
-      ${t.description ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${esc(t.description)}</div>` : ''}
-      <div class="actions" style="flex-wrap:wrap; gap:4px">
-        <a class="action-link" href="/admin/templates/${t.id}/edit" style="text-decoration:none">&#9998; 편집기</a>
-        <span class="action-link" onclick="downloadTemplate('${t.id}','${esc(t.name)}')">다운로드</span>
-        <span class="action-link" onclick="copyTemplate('${t.id}')">복사</span>
-        <span class="action-link" onclick="showEditTemplateModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">이름변경</span>
-        <span class="action-link danger" onclick="deleteTemplate('${t.id}','${esc(t.name)}')">삭제</span>
-      </div>
-    </div>
+  tbody.innerHTML = templates.map(t => `
+    <tr>
+      <td>
+        <a href="/admin/templates/${t.id}/edit" style="color:var(--primary); font-weight:500">${esc(t.name)}</a>
+      </td>
+      <td>${t.sheet_count}</td>
+      <td style="color:var(--text-muted)">${esc(t.description || '')}</td>
+      <td>${fmtDate(t.updated_at)}</td>
+      <td>
+        <div class="actions">
+          <a class="action-link" href="/admin/templates/${t.id}/edit" style="text-decoration:none">편집기</a>
+          <span class="action-link" onclick="downloadTemplate('${t.id}','${esc(t.name)}')">다운로드</span>
+          <span class="action-link" onclick="copyTemplate('${t.id}')">복사</span>
+          <span class="action-link" onclick="showEditTemplateModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">이름변경</span>
+          <span class="action-link danger" onclick="deleteTemplate('${t.id}','${esc(t.name)}')">삭제</span>
+        </div>
+      </td>
+    </tr>
   `).join('');
 }
 

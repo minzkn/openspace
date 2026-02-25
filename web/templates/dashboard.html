@@ -31,16 +31,23 @@
 <section class="section">
   <h2>열린 워크스페이스</h2>
   {% if open_workspaces %}
-  <div class="card-grid">
-    {% for ws in open_workspaces %}
-    <a href="/workspaces/{{ ws.id }}" class="ws-card open">
-      <div class="ws-card-name">{{ ws.name }}</div>
-      <div class="ws-card-meta">
-        <span class="badge open">OPEN</span>
-        <span>{{ ws.sheets|length }}개 시트</span>
-      </div>
-    </a>
-    {% endfor %}
+  <div class="table-container">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>이름</th>
+          <th>시트 수</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ws in open_workspaces %}
+        <tr>
+          <td><a href="/workspaces/{{ ws.id }}" style="color:var(--primary); font-weight:500">{{ ws.name }}</a></td>
+          <td>{{ ws.sheets|length }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
   {% else %}
   <p class="empty-msg">열린 워크스페이스가 없습니다.</p>

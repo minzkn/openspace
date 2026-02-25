@@ -22,6 +22,7 @@ from openpyxl.utils import get_column_letter
 router = APIRouter(prefix="/api/workspaces", tags=["cells"])
 
 MAX_ROWS = 10000
+MAX_COLS = 16384
 
 
 class PatchItem(BaseModel):
@@ -71,7 +72,7 @@ async def _apply_patches(
     for p in patches:
         if not (0 <= p.row < MAX_ROWS):
             continue
-        if p.col < 0:
+        if not (0 <= p.col < MAX_COLS):
             continue
         # readonly 컬럼: 일반 사용자 거부
         if p.col in readonly_cols and not is_admin_or_above(current_user):

@@ -18,6 +18,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 MAX_ROWS = 10000
+MAX_COLS = 16384
 
 
 def _get_user_from_session(session_id: str) -> tuple[User | None, DBSession]:
@@ -140,6 +141,9 @@ async def _handle_patch(websocket, workspace_id, msg, user, db, ws_obj):
     if not (0 <= row < MAX_ROWS):
         await websocket.send_json({"type": "error", "message": "Row out of range"})
         return
+    if not (0 <= col < MAX_COLS):
+        await websocket.send_json({"type": "error", "message": "Column out of range"})
+        return
 
     existing = db.query(WorkspaceCell).filter(
         WorkspaceCell.sheet_id == sheet_id,
@@ -148,11 +152,15 @@ async def _handle_patch(websocket, workspace_id, msg, user, db, ws_obj):
     ).first()
     old_value = existing.value if existing else None
 
+    comment = msg.get("comment")  # 셀 메모 (선택)
+
     if existing:
         if value is not None:
             existing.value = value
         if style is not None:
             existing.style = style
+        if comment is not None:
+            existing.comment = comment if comment else None
         existing.updated_by = user.id
         existing.updated_at = _now()
     else:
@@ -163,6 +171,7 @@ async def _handle_patch(websocket, workspace_id, msg, user, db, ws_obj):
             col_index=col,
             value=value,
             style=style,
+            comment=comment if comment else None,
             updated_by=user.id,
             updated_at=_now(),
         ))
@@ -179,14 +188,6 @@ async def _handle_patch(websocket, workspace_id, msg, user, db, ws_obj):
             new_value=value,
         ))
     db.commit()
-
-    comment = msg.get("comment")  # 셀 메모 (선택)
-
-    # Save comment if provided
-    if comment is not None:
-        if existing:
-            existing.comment = comment if comment else None
-        # (for new cells, comment is included in WorkspaceCell creation above)
 
     broadcast_msg = {
         "type": "patch",
@@ -239,6 +240,8 @@ async def _handle_batch_patch(websocket, workspace_id, msg, user, db, ws_obj):
         if row is None or col is None:
             continue
         if not (0 <= row < MAX_ROWS):
+            continue
+        if not (0 <= col < MAX_COLS):
             continue
         if col in readonly_cols and not is_admin_or_above(user):
             continue

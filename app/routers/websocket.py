@@ -117,7 +117,11 @@ async def _handle_patch(websocket, workspace_id, msg, user, db, ws_obj):
         return
 
     # Refresh workspace status
-    db.refresh(ws_obj)
+    try:
+        db.refresh(ws_obj)
+    except Exception:
+        await websocket.send_json({"type": "error", "message": "Workspace no longer exists"})
+        return
     if ws_obj.status == "CLOSED" and not is_admin_or_above(user):
         await websocket.send_json({"type": "error", "message": "Workspace is closed"})
         return
@@ -210,7 +214,11 @@ async def _handle_batch_patch(websocket, workspace_id, msg, user, db, ws_obj):
         await websocket.send_json({"type": "error", "message": "Missing fields"})
         return
 
-    db.refresh(ws_obj)
+    try:
+        db.refresh(ws_obj)
+    except Exception:
+        await websocket.send_json({"type": "error", "message": "Workspace no longer exists"})
+        return
     if ws_obj.status == "CLOSED" and not is_admin_or_above(user):
         await websocket.send_json({"type": "error", "message": "Workspace is closed"})
         return

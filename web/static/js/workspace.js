@@ -35,6 +35,9 @@ let numFmtMap = {};
 // var 사용: spreadsheet_core.js IIFE에서도 접근 가능하도록 window 프로퍼티로 등록
 var _suppressOnChange = false;
 
+// loadSheet 경합 방지 카운터 (빠른 시트 전환 시 이전 API 응답이 현재 시트를 덮어쓰는 것 방지)
+let _loadSheetSeq = 0;
+
 const BATCH_DELAY = 100;
 
 // 수식 엔진
@@ -224,6 +227,7 @@ async function loadSheet(index) {
   if (!sheet) return;
 
   const container = document.getElementById('spreadsheet');
+  const mySeq = ++_loadSheetSeq;  // 경합 방지: 이 호출의 고유 시퀀스 번호
 
   // ★ destroy를 innerHTML 변경 전에 수행 (DOM 정리 순서 중요)
   if (spreadsheet) {
@@ -235,6 +239,8 @@ async function loadSheet(index) {
   const res = await apiFetch(
     `/api/workspaces/${workspaceData.id}/sheets/${sheet.id}/snapshot`
   );
+  // 경합 방지: API 응답 도착 시 다른 loadSheet가 이미 시작되었으면 폐기
+  if (mySeq !== _loadSheetSeq) return;
   if (!res.ok) {
     container.innerHTML = '<div style="color:red;padding:20px">로딩 실패</div>';
     return;
@@ -297,7 +303,12 @@ async function loadSheet(index) {
     mergeCells,
     freezeColumns,
     onchange: handleCellChange,
-    onbeforepaste: function() { _suppressOnChange = true; },
+    onbeforepaste: function() {
+      _suppressOnChange = true;
+      // Safety: onpaste가 호출되지 않는 예외 상황 대비 (편집 불가 방지)
+      clearTimeout(window._pasteResetTimer);
+      window._pasteResetTimer = setTimeout(function() { _suppressOnChange = false; }, 1000);
+    },
     onpaste: handlePaste,
     onbeforechange: handleBeforeChange,
     onselection: handleSelection,
@@ -403,6 +414,7 @@ function handleCellChange(instance, cell, x, y, value) {
 
 function handlePaste(instance, data) {
   // onbeforepaste에서 _suppressOnChange=true 설정 → handleCellChange 중복 방지
+  clearTimeout(window._pasteResetTimer);
   _suppressOnChange = false;
   const sheet = sheets[currentSheetIndex];
   if (!sheet) return;
@@ -465,13 +477,35 @@ function flushPatches() {
 }
 
 function sendPatch(sheetId, row, col, value, style) {
-  if (ws && ws.readyState === WebSocket.OPEN)
+  if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'patch', sheet_id: sheetId, row, col, value, style }));
+  } else {
+    // WebSocket 미연결 시 REST API fallback (데이터 손실 방지)
+    _sendPatchesViaRest(sheetId, [{ row, col, value, style }]);
+  }
 }
 
 function sendBatchPatch(sheetId, patches) {
-  if (ws && ws.readyState === WebSocket.OPEN)
+  if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'batch_patch', sheet_id: sheetId, patches }));
+  } else {
+    _sendPatchesViaRest(sheetId, patches);
+  }
+}
+
+async function _sendPatchesViaRest(sheetId, patches) {
+  try {
+    const res = await apiFetch(
+      `/api/workspaces/${workspaceData.id}/sheets/${sheetId}/patches`,
+      { method: 'POST', body: JSON.stringify({ patches }) }
+    );
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast(e.detail || '저장 실패 (REST)', 'error');
+    }
+  } catch(e) {
+    showToast('서버 연결 실패 — 변경사항이 저장되지 않을 수 있습니다', 'error');
+  }
 }
 
 // ── WebSocket ─────────────────────────────────────────────────
@@ -605,13 +639,18 @@ function handleRemoteRowOp(msg) {
   if (!spreadsheet) return;
   // 자신의 탭에서 발행한 메시지는 이미 로컬 적용됨 → 스킵 (tab_id로 정확한 탭 식별)
   if (msg.tab_id && msg.tab_id === TAB_ID) return;
-  if (msg.type === 'row_insert') {
-    try { spreadsheet.insertRow(msg.count || 1, msg.row_index, true); } catch(e) {}
-  } else if (msg.type === 'row_delete') {
-    const indices = msg.row_indices || [msg.row_index];
-    for (let i = indices.length - 1; i >= 0; i--) {
-      try { spreadsheet.deleteRow(indices[i]); } catch(e) {}
+  _suppressOnChange = true;
+  try {
+    if (msg.type === 'row_insert') {
+      try { spreadsheet.insertRow(msg.count || 1, msg.row_index, true); } catch(e) {}
+    } else if (msg.type === 'row_delete') {
+      const indices = msg.row_indices || [msg.row_index];
+      for (let i = indices.length - 1; i >= 0; i--) {
+        try { spreadsheet.deleteRow(indices[i]); } catch(e) {}
+      }
     }
+  } finally {
+    _suppressOnChange = false;
   }
 }
 
@@ -694,13 +733,18 @@ function handleRemoteColOp(msg) {
   if (!spreadsheet) return;
   // 자신의 탭에서 발행한 메시지는 이미 로컬 적용됨 → 스킵 (tab_id로 정확한 탭 식별)
   if (msg.tab_id && msg.tab_id === TAB_ID) return;
-  if (msg.type === 'col_insert') {
-    try { spreadsheet.insertColumn(msg.count || 1, msg.col_index, true); } catch(e) {}
-  } else if (msg.type === 'col_delete') {
-    const indices = msg.col_indices || [msg.col_index];
-    for (let i = indices.length - 1; i >= 0; i--) {
-      try { spreadsheet.deleteColumn(indices[i]); } catch(e) {}
+  _suppressOnChange = true;
+  try {
+    if (msg.type === 'col_insert') {
+      try { spreadsheet.insertColumn(msg.count || 1, msg.col_index, true); } catch(e) {}
+    } else if (msg.type === 'col_delete') {
+      const indices = msg.col_indices || [msg.col_index];
+      for (let i = indices.length - 1; i >= 0; i--) {
+        try { spreadsheet.deleteColumn(indices[i]); } catch(e) {}
+      }
     }
+  } finally {
+    _suppressOnChange = false;
   }
 }
 

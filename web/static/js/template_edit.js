@@ -27,6 +27,12 @@ let selX1 = 0, selY1 = 0, selX2 = 0, selY2 = 0;
 // 숫자 서식 맵 (cellName → numFmt 문자열)
 let numFmtMap = {};
 
+// 붙여넣기 중 onchange 억제 플래그 (중복 undo 항목 + 이중 저장 방지)
+var _suppressOnChange = false;
+
+// loadSheet 경합 방지 카운터
+let _loadSheetSeq = 0;
+
 // 수식 엔진
 if (typeof formula !== 'undefined') {
   jspreadsheet.setExtensions({ formula });
@@ -223,6 +229,7 @@ async function loadSheet(index) {
   hideColPanel();
 
   const container = document.getElementById('spreadsheet');
+  const mySeq = ++_loadSheetSeq;  // 경합 방지
 
   // ★ destroy를 innerHTML 변경 전에 수행 (DOM 정리 순서 중요)
   if (spreadsheet) {
@@ -234,6 +241,7 @@ async function loadSheet(index) {
   const res = await apiFetch(
     `/api/admin/templates/${templateData.id}/sheets/${sheet.id}/snapshot`
   );
+  if (mySeq !== _loadSheetSeq) return;  // 경합 방지: 이미 다른 시트 로딩 시작됨
   if (!res.ok) {
     container.innerHTML = '<div style="color:red;padding:20px">로딩 실패</div>';
     return;
@@ -284,6 +292,11 @@ async function loadSheet(index) {
     mergeCells,
     freezeColumns,
     onchange: handleCellChange,
+    onbeforepaste: function() {
+      _suppressOnChange = true;
+      clearTimeout(window._pasteResetTimer);
+      window._pasteResetTimer = setTimeout(function() { _suppressOnChange = false; }, 1000);
+    },
     onpaste: handlePaste,
     onbeforechange: handleBeforeChange,
     onselection: handleSelection,
@@ -520,6 +533,7 @@ async function deleteSheet(index) {
 
 // ── 셀 변경 → 자동 저장 ──────────────────────────────────────
 function handleBeforeChange(instance, cell, x, y, value) {
+  if (_suppressOnChange) return value;
   try {
     const oldVal = instance.getValueFromCoords(parseInt(x), parseInt(y)) || '';
     cell._undoOldVal = oldVal;
@@ -528,6 +542,7 @@ function handleBeforeChange(instance, cell, x, y, value) {
 }
 
 function handleCellChange(instance, cell, x, y, value) {
+  if (_suppressOnChange) return;
   let rawValue = value;
   try {
     const raw = instance.options.data[parseInt(y)][parseInt(x)];
@@ -542,6 +557,8 @@ function handleCellChange(instance, cell, x, y, value) {
 }
 
 function handlePaste(instance, data) {
+  clearTimeout(window._pasteResetTimer);
+  _suppressOnChange = false;
   const undoChanges = [];
   data.forEach(item => {
     let rawValue = item[3];

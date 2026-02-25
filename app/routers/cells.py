@@ -122,7 +122,7 @@ async def _apply_patches(
         applied.append({"row": p.row, "col": p.col, "value": p.value, "style": p.style, "comment": p.comment})
 
     db.commit()
-    return len(applied)
+    return applied
 
 
 @router.get("/{workspace_id}/sheets/{sheet_id}/snapshot")
@@ -241,20 +241,17 @@ async def http_patches(
     current_user: User = Depends(require_user),
     db: DBSession = Depends(get_db),
 ):
-    count = await _apply_patches(workspace_id, sheet_id, body.patches, current_user, db)
-    if count > 0:
+    applied = await _apply_patches(workspace_id, sheet_id, body.patches, current_user, db)
+    if applied:
         import asyncio
         msg = {
             "type": "batch_patch",
             "sheet_id": sheet_id,
-            "patches": [
-                {"row": p.row, "col": p.col, "value": p.value, "style": p.style, "comment": p.comment}
-                for p in body.patches
-            ],
+            "patches": applied,
             "updated_by": current_user.username,
         }
         asyncio.create_task(hub.broadcast(workspace_id, msg))
-    return {"message": "ok", "applied": count}
+    return {"message": "ok", "applied": len(applied)}
 
 
 # ── Row insert / delete ──────────────────────────────────────

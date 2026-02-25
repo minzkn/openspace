@@ -88,6 +88,12 @@ const ctx = {
     const patches = changes.map(c => ({ row: c.row, col: c.col, value: c.newVal, style: null }));
     if (patches.length > 0) sendBatchPatch(sheet.id, patches);
   },
+  onSort: (changes) => {
+    const sheet = sheets[currentSheetIndex];
+    if (!sheet) return;
+    const patches = changes.map(c => ({ row: c.row, col: c.col, value: c.newVal, style: null }));
+    if (patches.length > 0) sendBatchPatch(sheet.id, patches);
+  },
   onRowInsert: (rowIndex, direction) => { insertRowApi(rowIndex, direction); },
   onRowDelete: (rowIndex) => { deleteRowApi(rowIndex); },
   onColumnInsert: (colIndex, direction) => { insertColApi(colIndex, direction); },

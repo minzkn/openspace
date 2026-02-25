@@ -1019,8 +1019,9 @@ function sortColumn(ctx, colIdx, ascending) {
       }
     }
   }
-  if (changes.length > 0 && ctx.undoManager) {
-    ctx.undoManager.push({ type: 'value', changes });
+  if (changes.length > 0) {
+    if (ctx.undoManager) ctx.undoManager.push({ type: 'value', changes });
+    if (ctx.onSort) ctx.onSort(changes);
   }
 }
 

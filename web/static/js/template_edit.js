@@ -67,6 +67,14 @@ const ctx = {
     }));
     if (batch.length > 0) flushBatch(batch);
   },
+  onSort: (changes) => {
+    const batch = changes.map(c => ({
+      row_index: c.row,
+      col_index: c.col,
+      value: c.newVal || null,
+    }));
+    if (batch.length > 0) flushBatch(batch);
+  },
   onCommentChange: (row, col, comment) => { saveCommentTemplate(row, col, comment); },
   undoManager: new SpreadsheetCore.UndoManager(),
 };

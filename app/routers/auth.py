@@ -8,7 +8,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session as DBSession
 
 from ..database import get_db
-from ..models import User
+from ..models import User, Session as SessionModel
 from ..auth import (
     create_session, delete_session, get_current_user, generate_csrf_token
 )
@@ -29,7 +29,10 @@ def _check_rate_limit(ip: str) -> None:
     now = time.time()
     cutoff = now - _RATE_WINDOW
     attempts = [t for t in _login_attempts[ip] if t > cutoff]
-    _login_attempts[ip] = attempts
+    if not attempts:
+        del _login_attempts[ip]  # 빈 항목 정리 (메모리 누수 방지)
+    else:
+        _login_attempts[ip] = attempts
     if len(attempts) >= _RATE_MAX:
         raise HTTPException(
             status_code=429,
@@ -131,6 +134,7 @@ async def me(current_user: User = Depends(get_current_user)):
 @router.patch("/me/password")
 async def change_password(
     body: PasswordChangeRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: DBSession = Depends(get_db),
 ):
@@ -140,5 +144,11 @@ async def change_password(
     current_user.must_change_password = 0  # 비밀번호 변경 완료
     from ..models import _now
     current_user.updated_at = _now()
+    # 현재 세션을 제외한 다른 세션 무효화 (보안)
+    current_session_id = request.cookies.get("session_id")
+    db.query(SessionModel).filter(
+        SessionModel.user_id == current_user.id,
+        SessionModel.id != current_session_id,
+    ).delete()
     db.commit()
     return {"message": "Password changed"}

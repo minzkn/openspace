@@ -16,8 +16,8 @@
   </div>
   <div class="workspace-actions">
     <button class="btn btn-sm btn-secondary" onclick="printSheet()" title="인쇄">인쇄</button>
-    <button class="btn btn-sm btn-secondary" onclick="exportWorkspace()">다운로드</button>
     {% if is_admin %}
+    <button class="btn btn-sm btn-secondary" onclick="exportWorkspace()">다운로드</button>
     <label class="btn btn-sm btn-secondary">
       업로드
       <input type="file" accept=".xlsx" style="display:none" onchange="importWorkspace(this)">

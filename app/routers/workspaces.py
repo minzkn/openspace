@@ -348,10 +348,20 @@ async def add_workspace_sheet(
     if len(ws.sheets) >= 64:
         raise HTTPException(status_code=400, detail="Max 64 sheets")
 
-    tmpl = db.query(Template).filter(Template.id == ws.template_id).first()
-    next_tmpl_idx = max((s.sheet_index for s in tmpl.sheets), default=-1) + 1 if tmpl else 0
+    # 템플릿이 삭제된 경우 새 템플릿 생성
+    tmpl = db.query(Template).filter(Template.id == ws.template_id).first() if ws.template_id else None
+    if not tmpl:
+        tmpl = Template(
+            id=str(uuid.uuid4()), name=f"_auto_{ws.name}",
+            created_by=current_user.id, updated_at=_now(),
+        )
+        db.add(tmpl)
+        db.flush()
+        ws.template_id = tmpl.id
+
+    next_tmpl_idx = max((s.sheet_index for s in tmpl.sheets), default=-1) + 1
     new_tmpl_sheet = TemplateSheet(
-        id=str(uuid.uuid4()), template_id=ws.template_id,
+        id=str(uuid.uuid4()), template_id=tmpl.id,
         sheet_index=next_tmpl_idx, sheet_name=body.sheet_name,
     )
     db.add(new_tmpl_sheet)

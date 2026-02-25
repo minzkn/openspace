@@ -37,7 +37,7 @@
       <div class="ws-card-name">{{ ws.name }}</div>
       <div class="ws-card-meta">
         <span class="badge open">OPEN</span>
-        <span>{{ ws.sheet_count }}개 시트</span>
+        <span>{{ ws.sheets|length }}개 시트</span>
       </div>
     </a>
     {% endfor %}

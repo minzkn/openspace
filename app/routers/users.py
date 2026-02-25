@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session as DBSession
 import openpyxl
 
 from ..database import get_db
-from ..models import User, UserExtraField, UserExtraValue, _now
+from ..models import User, UserExtraField, UserExtraValue, Session as SessionModel, _now
 from ..auth import get_current_user
 from ..rbac import require_admin, can_manage_user, SUPER_ADMIN, ADMIN, USER
 from ..crypto import crypto
@@ -209,15 +209,19 @@ async def import_users_xlsx(
                 _em = str(row_dict["email"]) if row_dict["email"] else None
                 existing.email = crypto.encrypt(_em) if _em else None
             if row_dict.get("password"):
-                existing.password_hash = crypto.hash_password(str(row_dict["password"]))
+                _pw = str(row_dict["password"]).strip()
+                if len(_pw) >= 8:
+                    existing.password_hash = crypto.hash_password(_pw)
             if row_dict.get("is_active") is not None:
                 existing.is_active = int(row_dict["is_active"])
             existing.updated_at = _now()
             updated += 1
         else:
             pw = str(row_dict.get("password", "") or "").strip()
-            if not pw:
+            force_change = False
+            if not pw or len(pw) < 8:
                 pw = "changeme!"
+                force_change = True
             _em = str(row_dict.get("email", "") or "") or None
             user = User(
                 id=uid or str(uuid.uuid4()),
@@ -226,6 +230,7 @@ async def import_users_xlsx(
                 password_hash=crypto.hash_password(pw),
                 role=role,
                 is_active=int(row_dict.get("is_active", 1) or 1),
+                must_change_password=1 if force_change else 0,
             )
             db.add(user)
             created += 1
@@ -289,6 +294,8 @@ async def update_user(
             raise HTTPException(status_code=400, detail="Password too short")
         user.password_hash = crypto.hash_password(body.password)
     if body.role is not None:
+        if body.role not in (SUPER_ADMIN, ADMIN, USER):
+            raise HTTPException(status_code=400, detail="Invalid role")
         if current_user.role == ADMIN and body.role == SUPER_ADMIN:
             raise HTTPException(status_code=403, detail="Cannot set SUPER_ADMIN role")
         user.role = body.role
@@ -296,6 +303,9 @@ async def update_user(
         user.email = crypto.encrypt(body.email) if body.email else None
     if body.is_active is not None:
         user.is_active = body.is_active
+        # 비활성화 시 해당 사용자의 모든 세션 무효화
+        if not body.is_active:
+            db.query(SessionModel).filter(SessionModel.user_id == user_id).delete()
     user.updated_at = _now()
     db.commit()
     return {"data": _user_to_dict(user), "message": "updated"}

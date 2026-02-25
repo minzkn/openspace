@@ -377,6 +377,7 @@ function mapColType(t) {
 // ── 셀 변경 핸들러 ────────────────────────────────────────────
 function handleBeforeChange(instance, cell, x, y, value) {
   if (_suppressOnChange) return value;
+  if (isClosed && !IS_ADMIN) return false;
   const sheet = sheets[currentSheetIndex];
   if (!sheet) return value;
   const col = sheet.columns[x];
@@ -510,6 +511,8 @@ async function _sendPatchesViaRest(sheetId, patches) {
 }
 
 // ── WebSocket ─────────────────────────────────────────────────
+let _wsConnectedOnce = false;  // 재접속 감지용
+
 function connectWebSocket() {
   if (ws) {
     ws.onclose = null; ws.onerror = null;
@@ -522,7 +525,15 @@ function connectWebSocket() {
   const url = `${proto}//${location.host}/ws/workspaces/${workspaceData.id}`;
 
   ws = new WebSocket(url);
-  ws.onopen = () => { setConnStatus('connected'); clearTimeout(wsReconnectTimer); };
+  ws.onopen = () => {
+    setConnStatus('connected');
+    clearTimeout(wsReconnectTimer);
+    if (_wsConnectedOnce) {
+      // 재접속 시 누락된 패치 복구를 위해 현재 시트 새로고침
+      loadSheet(currentSheetIndex);
+    }
+    _wsConnectedOnce = true;
+  };
   ws.onclose = () => { setConnStatus('disconnected'); wsReconnectTimer = setTimeout(connectWebSocket, 3000); };
   ws.onerror = () => setConnStatus('disconnected');
   ws.onmessage = (event) => {

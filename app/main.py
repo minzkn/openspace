@@ -294,25 +294,34 @@ async def workspace_page(workspace_id: str, request: Request):
                         "is_readonly": bool(c.is_readonly),
                         "width": c.width or 120,
                     })
-            # template_sheet_id=None인 경우 셀 데이터 + 병합에서 컬럼 수 추론
+            # 셀 데이터 + 병합에서 컬럼 수 보정 (열 삽입으로 확장된 경우 포함)
+            from sqlalchemy import func
+            max_col = db.query(func.max(WorkspaceCell.col_index)).filter(
+                WorkspaceCell.sheet_id == s.id
+            ).scalar()
+            num_cols_from_cells = (max_col + 1) if max_col is not None else 0
+            if s.merges:
+                try:
+                    import json as _j
+                    from openpyxl.utils import range_boundaries
+                    for rng in _j.loads(s.merges):
+                        _, _, mc, _ = range_boundaries(rng)
+                        num_cols_from_cells = max(num_cols_from_cells, mc)
+                except Exception:
+                    pass
+            needed = max(num_cols_from_cells, 5)
             if not cols:
-                from sqlalchemy import func
-                max_col = db.query(func.max(WorkspaceCell.col_index)).filter(
-                    WorkspaceCell.sheet_id == s.id
-                ).scalar()
-                num_cols = (max_col or 0) + 1
-                # 병합 데이터에서도 최대 컬럼 추론
-                if s.merges:
-                    try:
-                        import json as _j
-                        from openpyxl.utils import range_boundaries
-                        for rng in _j.loads(s.merges):
-                            _, _, mc, _ = range_boundaries(rng)
-                            num_cols = max(num_cols, mc)
-                    except Exception:
-                        pass
-                num_cols = max(num_cols, 5)
-                for ci in range(num_cols):
+                for ci in range(needed):
+                    cols.append({
+                        "id": f"auto-{ci}",
+                        "col_index": ci,
+                        "col_header": get_column_letter(ci + 1),
+                        "col_type": "text",
+                        "is_readonly": False,
+                        "width": 120,
+                    })
+            elif needed > len(cols):
+                for ci in range(len(cols), needed):
                     cols.append({
                         "id": f"auto-{ci}",
                         "col_index": ci,

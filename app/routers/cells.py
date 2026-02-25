@@ -146,20 +146,19 @@ async def get_snapshot(
     # 컬럼 메타
     tmpl_sheet = db.query(TemplateSheet).filter(TemplateSheet.id == ws_sheet.template_sheet_id).first()
     num_cols = len(tmpl_sheet.columns) if tmpl_sheet else 0
-    # template_sheet_id=None인 경우 셀 데이터 + 병합 데이터에서 컬럼 수 추론
-    if num_cols == 0:
-        if cells:
-            num_cols = max((c.col_index for c in cells), default=-1) + 1
-        # 병합 데이터에서도 최대 컬럼 추론
-        if ws_sheet.merges:
-            try:
-                from openpyxl.utils import range_boundaries
-                for rng in json.loads(ws_sheet.merges):
-                    _, _, max_col, _ = range_boundaries(rng)
-                    num_cols = max(num_cols, max_col)
-            except Exception:
-                pass
-        num_cols = max(num_cols, 5)  # 최소 5열
+    # 셀 데이터 + 병합 데이터에서 컬럼 수 보정 (열 삽입으로 확장된 경우 포함)
+    if cells:
+        max_cell_col = max((c.col_index for c in cells), default=-1) + 1
+        num_cols = max(num_cols, max_cell_col)
+    if ws_sheet.merges:
+        try:
+            from openpyxl.utils import range_boundaries
+            for rng in json.loads(ws_sheet.merges):
+                _, _, max_col, _ = range_boundaries(rng)
+                num_cols = max(num_cols, max_col)
+        except Exception:
+            pass
+    num_cols = max(num_cols, 5)  # 최소 5열
     max_row = max((c.row_index for c in cells), default=-1) + 1
     num_rows = max(max_row, 100)
 

@@ -44,7 +44,7 @@ async def _apply_patches(
     current_user: User,
     db: DBSession,
     broadcast: bool = True,
-) -> int:
+) -> list:
     ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found")

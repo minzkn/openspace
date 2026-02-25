@@ -221,7 +221,7 @@ a { text-decoration: none; color: inherit; }
 
 .closed-overlay {
   position: absolute; inset: 0; background: rgba(255,255,255,.7);
-  display: flex; align-items: center; justify-content: center; z-index: 10;
+  display: flex; align-items: center; justify-content: center; z-index: 800;
 }
 .closed-message { background: #fee2e2; border: 2px solid var(--danger); border-radius: var(--radius); padding: 20px 32px; font-size: 16px; font-weight: 600; color: var(--danger); }
 

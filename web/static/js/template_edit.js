@@ -258,7 +258,7 @@ async function loadSheet(index) {
     gridData.push(row);
   }
 
-  const mergeCells = data.merges && Object.keys(data.merges).length > 0 ? data.merges : undefined;
+  const mergeCells = data.merges && Object.keys(data.merges).length > 0 ? data.merges : {};
   const freezeColumns = data.freeze_columns > 0 ? data.freeze_columns : undefined;
 
   // 숫자 서식 맵 초기화
@@ -605,10 +605,18 @@ async function flushBatch(batch) {
   if (!batch.length) return;
   const sheet = sheets[currentSheetIndex];
   if (!sheet) return;
-  await apiFetch(
-    `/api/admin/templates/${templateData.id}/sheets/${sheet.id}/cells`,
-    { method: 'POST', body: JSON.stringify(batch) }
-  );
+  try {
+    const res = await apiFetch(
+      `/api/admin/templates/${templateData.id}/sheets/${sheet.id}/cells`,
+      { method: 'POST', body: JSON.stringify(batch) }
+    );
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast(e.detail || '셀 저장 실패', 'error');
+    }
+  } catch(e) {
+    showToast('서버 연결 실패 — 변경사항이 저장되지 않을 수 있습니다', 'error');
+  }
 }
 
 // 행/열 삽입·삭제 후 전체 셀 재동기화 (replace=true로 기존 셀 삭제 후 재저장)

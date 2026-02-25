@@ -168,6 +168,10 @@ function init() {
   if (sheets.length > 0) loadSheet(0);
   connectWebSocket();
   document.addEventListener('click', SpreadsheetCore.closeAllDropdowns);
+  // 페이지 닫기 시 미전송 패치 플러시 (데이터 손실 방지)
+  window.addEventListener('beforeunload', function() {
+    flushPatches();
+  });
 }
 
 function initFormulaBar() {
@@ -270,7 +274,7 @@ async function loadSheet(index) {
     gridData.push(row);
   }
 
-  const mergeCells = data.merges && Object.keys(data.merges).length > 0 ? data.merges : undefined;
+  const mergeCells = data.merges && Object.keys(data.merges).length > 0 ? data.merges : {};
   const freezeColumns = data.freeze_columns > 0 ? data.freeze_columns : undefined;
 
   // 숫자 서식 맵 초기화

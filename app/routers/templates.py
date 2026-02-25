@@ -789,6 +789,16 @@ async def delete_template_column(
     ).all()
     for c in later_cells:
         c.col_index -= 1
+    # 병합 범위 업데이트
+    ts = db.query(TemplateSheet).filter(TemplateSheet.id == sheet_id).first()
+    if ts and ts.merges:
+        try:
+            merges = json.loads(ts.merges)
+            from .cells import _shift_merges_col
+            updated = _shift_merges_col(merges, deleted_idx, -1)
+            ts.merges = json.dumps(updated)
+        except Exception:
+            pass
     db.commit()
 
 

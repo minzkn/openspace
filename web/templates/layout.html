@@ -45,7 +45,7 @@
   <!-- 메인 -->
   <div class="main-area">
     <header class="topbar">
-      <button class="sidebar-toggle" onclick="document.getElementById('sidebar').classList.toggle('collapsed')">&#9776;</button>
+      <button class="sidebar-toggle" onclick="var s=document.getElementById('sidebar');s.classList.toggle('collapsed');s.classList.toggle('open')">&#9776;</button>
       <span class="topbar-title">{% block page_title %}{% endblock %}</span>
       <div class="topbar-user">
         <span class="username">{{ current_user.username }}</span>

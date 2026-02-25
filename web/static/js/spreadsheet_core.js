@@ -325,13 +325,32 @@ function fmtUnmerge(ctx) {
   if (!ctx.canMerge()) return;
   const sel = ctx.getSelection();
   try {
-    var cellName = colIndexToLetter(sel.x1) + (sel.y1 + 1);
     var merges = ss.getMerge();
-    if (!merges || !merges[cellName]) {
+    if (!merges || Object.keys(merges).length === 0) {
       if (typeof showToast === 'function') showToast('선택한 셀에 병합이 없습니다', 'error');
       return;
     }
-    ss.removeMerge(cellName);
+    // 선택 범위 내 또는 선택 셀을 포함하는 병합 찾기
+    var found = null;
+    for (var key in merges) {
+      var m = key.match(/^([A-Z]+)(\d+)$/);
+      if (!m) continue;
+      var mc = letterToColIndex(m[1]);
+      var mr = parseInt(m[2]) - 1;
+      var span = merges[key];
+      var mcEnd = mc + (span[0] || 1) - 1;
+      var mrEnd = mr + (span[1] || 1) - 1;
+      // 선택된 셀이 이 병합 범위 안에 있는지 확인
+      if (sel.x1 >= mc && sel.x1 <= mcEnd && sel.y1 >= mr && sel.y1 <= mrEnd) {
+        found = key;
+        break;
+      }
+    }
+    if (!found) {
+      if (typeof showToast === 'function') showToast('선택한 셀에 병합이 없습니다', 'error');
+      return;
+    }
+    ss.removeMerge(found);
     if (ctx.onMergeChange) ctx.onMergeChange();
   } catch(e) { if (typeof showToast === 'function') showToast('병합 해제 실패: ' + e.message, 'error'); }
 }
@@ -578,7 +597,7 @@ function deleteSelectedCells(ctx) {
 // ============================================================
 // ── 찾기 / 바꾸기 ───────────────────────────────────────────
 // ============================================================
-let _findState = { results: [], current: -1, lastQuery: '' };
+let _findState = { results: [], current: -1, lastQuery: '', lastCase: false };
 
 function openFindPanel(showReplace) {
   const panel = document.getElementById('find-panel');
@@ -594,7 +613,7 @@ function closeFindPanel() {
   const panel = document.getElementById('find-panel');
   if (!panel) return;
   panel.classList.remove('open');
-  _findState = { results: [], current: -1, lastQuery: '' };
+  _findState = { results: [], current: -1, lastQuery: '', lastCase: false };
   updateFindCount();
 }
 
@@ -605,8 +624,8 @@ function findNext(ctx) {
   if (!query) return;
   const caseSensitive = (document.getElementById('find-case') || {}).checked || false;
 
-  // rebuild results if query changed
-  if (query !== _findState.lastQuery) {
+  // rebuild results if query or case-sensitivity changed
+  if (query !== _findState.lastQuery || caseSensitive !== _findState.lastCase) {
     _buildFindResults(ctx, query, caseSensitive);
   }
   if (_findState.results.length === 0) { updateFindCount(); return; }
@@ -624,7 +643,7 @@ function findPrev(ctx) {
   if (!query) return;
   const caseSensitive = (document.getElementById('find-case') || {}).checked || false;
 
-  if (query !== _findState.lastQuery) {
+  if (query !== _findState.lastQuery || caseSensitive !== _findState.lastCase) {
     _buildFindResults(ctx, query, caseSensitive);
   }
   if (_findState.results.length === 0) { updateFindCount(); return; }
@@ -708,6 +727,7 @@ function _buildFindResults(ctx, query, caseSensitive) {
   _findState.results = [];
   _findState.current = -1;
   _findState.lastQuery = query;
+  _findState.lastCase = caseSensitive;
   const data = ss.getData();
   const q = caseSensitive ? query : query.toLowerCase();
   for (let r = 0; r < data.length; r++) {
@@ -1041,9 +1061,18 @@ function sortColumn(ctx, colIdx, ascending) {
   }
 
   // Extract rows with data
+  // 정렬 전 행별 스타일 캡처
   const rows = [];
   for (let r = 0; r <= lastRow; r++) {
-    rows.push({ idx: r, data: (data[r] || []).slice() });
+    const rowStyles = {};
+    for (let c = 0; c < (data[r] || []).length; c++) {
+      var cn = colIndexToLetter(c) + (r + 1);
+      try {
+        var st = ss.getStyle(cn);
+        if (st) rowStyles[c] = st;
+      } catch(e) {}
+    }
+    rows.push({ idx: r, data: (data[r] || []).slice(), styles: rowStyles });
   }
 
   // Sort by target column
@@ -1063,7 +1092,7 @@ function sortColumn(ctx, colIdx, ascending) {
     return ascending ? sa.localeCompare(sb) : sb.localeCompare(sa);
   });
 
-  // Apply sorted data
+  // Apply sorted data + styles
   const changes = [];
   if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = true;
   try {
@@ -1076,6 +1105,10 @@ function sortColumn(ctx, colIdx, ascending) {
           try { ss.setValueFromCoords(c, r, newVal, true); } catch(e) {}
           changes.push({ row: r, col: c, oldVal, newVal: String(newVal) });
         }
+        // 스타일도 원래 행에서 이동
+        var cn = colIndexToLetter(c) + (r + 1);
+        var srcStyle = rows[r].styles[c] || '';
+        try { ss.setStyle(cn, srcStyle); } catch(e) {}
       }
     }
   } finally {

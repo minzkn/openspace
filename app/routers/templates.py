@@ -1022,10 +1022,14 @@ async def export_template_xlsx(
                 if c:
                     val = c.formula if c.formula else c.value
                     if val is not None and not val.startswith("="):
-                        try:
-                            val = int(val) if "." not in val else float(val)
-                        except (ValueError, TypeError):
-                            pass
+                        # 선행 0이 있는 문자열("00123" 등)은 텍스트로 유지
+                        if len(val) > 1 and val.startswith("0") and val != "0" and not val.startswith("0."):
+                            pass  # keep as string to preserve leading zeros
+                        else:
+                            try:
+                                val = int(val) if "." not in val else float(val)
+                            except (ValueError, TypeError):
+                                pass
                     ws_cell = ws.cell(row=ri + 1, column=ci + 1, value=val)
                     _apply_cell_style(ws_cell, c.style)
                     if c.comment:

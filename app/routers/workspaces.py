@@ -4,7 +4,7 @@ import io
 import json
 import uuid
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
@@ -248,6 +248,7 @@ async def update_ws_sheet_merges(
     workspace_id: str,
     sheet_id: str,
     body: MergesUpdate,
+    request: Request,
     current_user: User = Depends(require_admin),
     db: DBSession = Depends(get_db),
 ):
@@ -260,6 +261,13 @@ async def update_ws_sheet_merges(
         raise HTTPException(status_code=404, detail="Sheet not found")
     ws_sheet.merges = json.dumps(body.merges, ensure_ascii=False)
     db.commit()
+    import asyncio
+    asyncio.create_task(hub.broadcast(workspace_id, {
+        "type": "sheet_config_updated",
+        "sheet_id": sheet_id,
+        "updated_by": current_user.username,
+        "tab_id": request.headers.get("X-Tab-ID", ""),
+    }, exclude=None))
     return {"message": "merges saved", "count": len(body.merges)}
 
 
@@ -280,6 +288,7 @@ async def update_ws_sheet_row_heights(
     workspace_id: str,
     sheet_id: str,
     body: RowHeightsUpdate,
+    request: Request,
     current_user: User = Depends(require_admin),
     db: DBSession = Depends(get_db),
 ):
@@ -292,6 +301,13 @@ async def update_ws_sheet_row_heights(
         raise HTTPException(status_code=404, detail="Sheet not found")
     ws_sheet.row_heights = json.dumps(body.row_heights) if body.row_heights else None
     db.commit()
+    import asyncio
+    asyncio.create_task(hub.broadcast(workspace_id, {
+        "type": "sheet_config_updated",
+        "sheet_id": sheet_id,
+        "updated_by": current_user.username,
+        "tab_id": request.headers.get("X-Tab-ID", ""),
+    }, exclude=None))
     return {"message": "row_heights saved"}
 
 
@@ -300,6 +316,7 @@ async def update_ws_sheet_freeze(
     workspace_id: str,
     sheet_id: str,
     body: FreezeUpdate,
+    request: Request,
     current_user: User = Depends(require_admin),
     db: DBSession = Depends(get_db),
 ):
@@ -312,6 +329,13 @@ async def update_ws_sheet_freeze(
         raise HTTPException(status_code=404, detail="Sheet not found")
     ws_sheet.freeze_panes = body.freeze_panes
     db.commit()
+    import asyncio
+    asyncio.create_task(hub.broadcast(workspace_id, {
+        "type": "sheet_config_updated",
+        "sheet_id": sheet_id,
+        "updated_by": current_user.username,
+        "tab_id": request.headers.get("X-Tab-ID", ""),
+    }, exclude=None))
     return {"message": "freeze saved", "freeze_panes": body.freeze_panes}
 
 
@@ -320,6 +344,7 @@ async def update_ws_conditional_formats(
     workspace_id: str,
     sheet_id: str,
     body: ConditionalFormatsUpdate,
+    request: Request,
     current_user: User = Depends(require_admin),
     db: DBSession = Depends(get_db),
 ):
@@ -332,6 +357,13 @@ async def update_ws_conditional_formats(
         raise HTTPException(status_code=404, detail="Sheet not found")
     ws_sheet.conditional_formats = body.conditional_formats
     db.commit()
+    import asyncio
+    asyncio.create_task(hub.broadcast(workspace_id, {
+        "type": "sheet_config_updated",
+        "sheet_id": sheet_id,
+        "updated_by": current_user.username,
+        "tab_id": request.headers.get("X-Tab-ID", ""),
+    }, exclude=None))
     return {"message": "conditional formats saved"}
 
 
@@ -572,10 +604,14 @@ async def export_workspace_xlsx(
         for c in cells:
             val = c.value
             if val is not None and not val.startswith("="):
-                try:
-                    val = int(val) if "." not in val else float(val)
-                except (ValueError, TypeError):
-                    pass
+                # 선행 0이 있는 문자열("00123" 등)은 텍스트로 유지
+                if len(val) > 1 and val.startswith("0") and val != "0" and not val.startswith("0."):
+                    pass  # keep as string to preserve leading zeros
+                else:
+                    try:
+                        val = int(val) if "." not in val else float(val)
+                    except (ValueError, TypeError):
+                        pass
             excel_cell = excel_ws.cell(row=c.row_index + 1, column=c.col_index + 1, value=val)
             _apply_cell_style(excel_cell, c.style)
             if c.comment:

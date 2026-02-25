@@ -27,6 +27,8 @@ const TAB_ID = crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36
 
 // 현재 선택 범위
 let selX1 = 0, selY1 = 0, selX2 = 0, selY2 = 0;
+// 붙여넣기 시작 위치 (onbeforepaste에서 캡처, onpaste에서 사용)
+let _pasteStartRow = 0, _pasteStartCol = 0;
 
 // 숫자 서식 맵 (cellName → numFmt 문자열)
 let numFmtMap = {};
@@ -311,6 +313,9 @@ async function loadSheet(index) {
     onchange: handleCellChange,
     onbeforepaste: function() {
       _suppressOnChange = true;
+      // 붙여넣기 시작 위치 캡처 (onpaste에서 사용)
+      _pasteStartRow = selY1;
+      _pasteStartCol = selX1;
       // Safety: onpaste가 호출되지 않는 예외 상황 대비 (편집 불가 방지)
       clearTimeout(window._pasteResetTimer);
       window._pasteResetTimer = setTimeout(function() { _suppressOnChange = false; }, 1000);
@@ -426,26 +431,30 @@ function handlePaste(instance, data) {
   if (isClosed && !IS_ADMIN) return;
   const sheet = sheets[currentSheetIndex];
   if (!sheet) return;
+  // data는 2D 텍스트 배열: [[val1, val2], [val3, val4], ...]
+  // _pasteStartRow/_pasteStartCol은 onbeforepaste에서 캡처한 시작 위치
   const patches = [];
   const undoChanges = [];
-  data.forEach(item => {
-    const ix = item[1];
-    // 읽기 전용 컬럼은 붙여넣기 대상에서 제외 (ADMIN 제외)
-    const col = sheet.columns[ix];
-    if (col && col.is_readonly && !IS_ADMIN) return;
-    let rawValue = item[3];
-    let oldVal = '';
-    try {
-      const gridData = instance.options.data;
-      const iy = item[0];
-      oldVal = instance.getValueFromCoords(ix, iy) || '';
-      if (gridData && iy < gridData.length && gridData[iy] && ix < gridData[iy].length) {
-        const raw = gridData[iy][ix];
-        if (raw !== undefined && raw !== null) rawValue = String(raw);
-      }
-    } catch(e) {}
-    patches.push({ row: item[0], col: ix, value: rawValue });
-    undoChanges.push({ row: item[0], col: ix, oldVal, newVal: rawValue });
+  const gridData = instance.options.data;
+  data.forEach((rowData, ri) => {
+    if (!Array.isArray(rowData)) return;
+    const row = _pasteStartRow + ri;
+    rowData.forEach((cellVal, ci) => {
+      const col = _pasteStartCol + ci;
+      // 읽기 전용 컬럼은 붙여넣기 대상에서 제외 (ADMIN 제외)
+      const colDef = sheet.columns[col];
+      if (colDef && colDef.is_readonly && !IS_ADMIN) return;
+      // gridData에서 실제 적용된 값 읽기 (jspreadsheet가 이미 적용)
+      let rawValue = cellVal != null ? String(cellVal) : '';
+      try {
+        if (gridData && row < gridData.length && gridData[row] && col < gridData[row].length) {
+          const raw = gridData[row][col];
+          if (raw !== undefined && raw !== null) rawValue = String(raw);
+        }
+      } catch(e) {}
+      patches.push({ row, col, value: rawValue, style: null });
+      undoChanges.push({ row, col, oldVal: '', newVal: rawValue });
+    });
   });
   if (undoChanges.length > 0 && ctx.undoManager) {
     ctx.undoManager.push({ type: 'value', changes: undoChanges });
@@ -470,11 +479,13 @@ function flushPatches() {
   if (!pendingPatches.length) return;
   const bySheet = {};
   pendingPatches.forEach(p => {
-    if (!bySheet[p.sheetId]) bySheet[p.sheetId] = [];
-    bySheet[p.sheetId].push({ row: p.row, col: p.col, value: p.value, style: p.style });
+    if (!bySheet[p.sheetId]) bySheet[p.sheetId] = {};
+    // 같은 셀에 대한 패치는 마지막 값만 유지 (중복 제거)
+    bySheet[p.sheetId][`${p.row},${p.col}`] = { row: p.row, col: p.col, value: p.value, style: p.style };
   });
   pendingPatches = [];
-  Object.entries(bySheet).forEach(([sheetId, patches]) => {
+  Object.entries(bySheet).forEach(([sheetId, patchMap]) => {
+    const patches = Object.values(patchMap);
     if (patches.length === 1) {
       const p = patches[0];
       sendPatch(sheetId, p.row, p.col, p.value, p.style);
@@ -604,6 +615,15 @@ function handleWsMessage(msg) {
       renderTabs();
       if (wasActive) loadSheet(currentSheetIndex);
       showToast('시트가 삭제됨', 'info');
+    }
+    return;
+  }
+  if (msg.type === 'sheet_config_updated') {
+    // 다른 탭에서 병합/행높이/틀고정 변경 → 해당 시트 리로드
+    if (msg.tab_id === TAB_ID) return;  // 자신의 탭에서 발행한 변경은 스킵
+    const sheet = sheets[currentSheetIndex];
+    if (sheet && sheet.id === msg.sheet_id) {
+      loadSheet(currentSheetIndex);
     }
     return;
   }

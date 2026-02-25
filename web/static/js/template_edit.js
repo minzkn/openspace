@@ -23,6 +23,8 @@ const SAVE_DELAY = 800;
 
 // 현재 선택 범위
 let selX1 = 0, selY1 = 0, selX2 = 0, selY2 = 0;
+// 붙여넣기 시작 위치 (onbeforepaste에서 캡처, onpaste에서 사용)
+let _pasteStartRow = 0, _pasteStartCol = 0;
 
 // 숫자 서식 맵 (cellName → numFmt 문자열)
 let numFmtMap = {};
@@ -312,6 +314,8 @@ async function loadSheet(index) {
     onchange: handleCellChange,
     onbeforepaste: function() {
       _suppressOnChange = true;
+      _pasteStartRow = selY1;
+      _pasteStartCol = selX1;
       clearTimeout(window._pasteResetTimer);
       window._pasteResetTimer = setTimeout(function() { _suppressOnChange = false; }, 1000);
     },
@@ -577,17 +581,24 @@ function handleCellChange(instance, cell, x, y, value) {
 function handlePaste(instance, data) {
   clearTimeout(window._pasteResetTimer);
   _suppressOnChange = false;
+  // data는 2D 텍스트 배열: [[val1, val2], [val3, val4], ...]
   const undoChanges = [];
-  data.forEach(item => {
-    let rawValue = item[3];
-    let oldVal = '';
-    try {
-      const raw = instance.options.data[item[0]][item[1]];
-      oldVal = instance.getValueFromCoords(item[1], item[0]) || '';
-      if (raw !== undefined) rawValue = raw;
-    } catch(e) {}
-    undoChanges.push({ row: item[0], col: item[1], oldVal, newVal: rawValue });
-    enqueueSave(item[0], item[1], rawValue);
+  const gridData = instance.options.data;
+  data.forEach((rowData, ri) => {
+    if (!Array.isArray(rowData)) return;
+    const row = _pasteStartRow + ri;
+    rowData.forEach((cellVal, ci) => {
+      const col = _pasteStartCol + ci;
+      let rawValue = cellVal != null ? String(cellVal) : '';
+      try {
+        if (gridData && row < gridData.length && gridData[row] && col < gridData[row].length) {
+          const raw = gridData[row][col];
+          if (raw !== undefined && raw !== null) rawValue = String(raw);
+        }
+      } catch(e) {}
+      undoChanges.push({ row, col, oldVal: '', newVal: rawValue });
+      enqueueSave(row, col, rawValue);
+    });
   });
   if (undoChanges.length > 0 && ctx.undoManager) {
     ctx.undoManager.push({ type: 'value', changes: undoChanges });
@@ -605,6 +616,7 @@ function enqueueSave(row, col, value) {
 async function flushSave() {
   if (!savePending.length) return;
   const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
   const batch = savePending.splice(0);
   setSaveStatus('저장 중...');
   showSaveIndicator();

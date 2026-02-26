@@ -137,6 +137,7 @@ const ctx = {
     SpreadsheetCore.refreshColumnHeaders(ctx);
     saveAllCells();
   },
+  onColumnProps: (colIndex) => { showColumnPropsModal(colIndex); },
   undoManager: new SpreadsheetCore.UndoManager(),
 };
 
@@ -246,7 +247,6 @@ async function loadSheet(index) {
   const sheet = sheets[index];
   if (!sheet) return;
   selectedCol = -1;
-  hideColPanel();
 
   const container = document.getElementById('spreadsheet');
   const mySeq = ++_loadSheetSeq;  // 경합 방지
@@ -362,8 +362,6 @@ async function loadSheet(index) {
     });
   }
 
-  attachHeaderClickListeners();
-
   // 셀 메모 표시 (시트 전환 시 이전 시트 메모 잔존 방지 위해 항상 호출)
   SpreadsheetCore.addCommentIndicators(ctx, data.comments || {});
 
@@ -390,41 +388,34 @@ function mapType(t) {
 }
 
 // ── 헤더 클릭 ─────────────────────────────────────────────────
-function attachHeaderClickListeners() {
-  const container = document.getElementById('spreadsheet');
-  container.querySelectorAll('thead td').forEach((th, i) => {
-    if (i === 0) return;
-    const colIdx = i - 1;
-    th.style.cursor = 'pointer';
-    th.addEventListener('click', () => selectColumn(colIdx));
-  });
-}
-
-function selectColumn(colIdx) {
-  selectedCol = colIdx;
-  const sheet = sheets[currentSheetIndex];
-  const col = sheet.columns[colIdx];
-  if (!col) return;
-  document.getElementById('cp-header').value = col.col_header;
-  document.getElementById('cp-type').value = col.col_type;
-  document.getElementById('cp-width').value = col.width || 120;
-  document.getElementById('cp-readonly').checked = !!col.is_readonly;
-  showColPanel();
-}
-
 function handleSelection(el, x1, y1, x2, y2) {
   selX1 = x1; selY1 = y1; selX2 = x2; selY2 = y2;
-  if (x1 === x2 && y1 === 0) selectColumn(x1);
   SpreadsheetCore.updateToolbarState(ctx);
   if (ctx._positionAutofillHandle) ctx._positionAutofillHandle();
 }
 
-// ── 컬럼 패널 ─────────────────────────────────────────────────
-function showColPanel() { document.getElementById('col-panel').classList.add('visible'); }
-function hideColPanel() { document.getElementById('col-panel').classList.remove('visible'); }
+// ── 컬럼 속성 모달 ───────────────────────────────────────────
+function showColumnPropsModal(colIdx) {
+  selectedCol = colIdx;
+  const sheet = sheets[currentSheetIndex];
+  const col = sheet.columns[colIdx];
+  if (!col) return;
+
+  showModalFromTemplate('컬럼 속성: ' + col.col_header, 'col-props-tpl');
+  setTimeout(() => {
+    const hdr = document.getElementById('cp-header');
+    const tp = document.getElementById('cp-type');
+    const wd = document.getElementById('cp-width');
+    const ro = document.getElementById('cp-readonly');
+    if (hdr) hdr.value = col.col_header;
+    if (tp) tp.value = col.col_type;
+    if (wd) wd.value = col.width || 120;
+    if (ro) ro.checked = !!col.is_readonly;
+  }, 50);
+}
 
 async function applyColProps() {
-  if (selectedCol < 0) { showToast('헤더를 클릭하여 컬럼을 선택하세요', 'warning'); return; }
+  if (selectedCol < 0) return;
   const sheet = sheets[currentSheetIndex];
   const col = sheet.columns[selectedCol];
   if (!col) return;
@@ -442,6 +433,7 @@ async function applyColProps() {
   );
   if (res.ok) {
     Object.assign(col, payload);
+    closeModal();
     showToast('컬럼 속성이 저장되었습니다', 'success');
     const container = document.getElementById('spreadsheet');
     const ths = container.querySelectorAll('thead td');
@@ -469,8 +461,8 @@ async function addColumn() {
   }
 }
 
-async function deleteColumn() {
-  if (selectedCol < 0) { showToast('헤더를 클릭하여 컬럼을 선택하세요', 'warning'); return; }
+async function deleteColumnFromModal() {
+  if (selectedCol < 0) return;
   const sheet = sheets[currentSheetIndex];
   const col = sheet.columns[selectedCol];
   if (!col) return;
@@ -483,7 +475,7 @@ async function deleteColumn() {
   if (res.ok || res.status === 204) {
     sheet.columns.splice(selectedCol, 1);
     selectedCol = -1;
-    hideColPanel();
+    closeModal();
     showToast('컬럼이 삭제되었습니다', 'success');
     await loadSheet(currentSheetIndex);
   } else {

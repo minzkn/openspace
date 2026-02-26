@@ -163,6 +163,40 @@
   </div>
 </template>
 
+{% if is_admin %}
+<!-- 컬럼 속성 모달 -->
+<template id="col-props-tpl">
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div class="form-group">
+      <label>헤더명</label>
+      <input type="text" id="cp-header" class="form-input" placeholder="컬럼명">
+    </div>
+    <div class="form-group">
+      <label>타입</label>
+      <select id="cp-type" class="form-input">
+        <option value="text">텍스트</option>
+        <option value="number">숫자</option>
+        <option value="date">날짜</option>
+        <option value="checkbox">체크박스</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>너비 (px)</label>
+      <input type="number" id="cp-width" class="form-input" value="120" min="40" max="500">
+    </div>
+    <div class="form-group">
+      <label><input type="checkbox" id="cp-readonly"> 읽기전용</label>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-danger" onclick="deleteColumnFromModal()">컬럼 삭제</button>
+      <span style="flex:1"></span>
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">취소</button>
+      <button type="button" class="btn btn-primary" onclick="applyColProps()">적용</button>
+    </div>
+  </div>
+</template>
+{% endif %}
+
 <script id="workspace-data" type="application/json">{{ workspace_data_json | safe }}</script>
 {% endblock %}
 
@@ -174,6 +208,6 @@
   const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
   const CURRENT_USER = {{ current_user.username | tojson }};
 </script>
-<script src="/static/js/spreadsheet_core.js"></script>
-<script src="/static/js/workspace.js"></script>
+<script src="/static/js/spreadsheet_core.js?v=20260226d"></script>
+<script src="/static/js/workspace.js?v=20260226d"></script>
 {% endblock %}

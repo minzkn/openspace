@@ -124,6 +124,7 @@ const ctx = {
   onColumnDelete: (colIndex) => { deleteColApi(colIndex); },
   onColumnsDelete: (colIndices) => { deleteColsApi(colIndices); },
   onCommentChange: (row, col, comment) => { saveComment(row, col, comment); },
+  onColumnProps: IS_ADMIN ? (colIndex) => { showColumnPropsModal(colIndex); } : undefined,
   undoManager: new SpreadsheetCore.UndoManager(),
 };
 
@@ -1076,6 +1077,85 @@ async function saveRowHeights() {
     `/api/admin/workspaces/${workspaceData.id}/sheets/${sheet.id}/row-heights`,
     { method: 'PATCH', body: JSON.stringify({ row_heights: rowHeights }) }
   );
+}
+
+// ── 컬럼 속성 모달 (관리자 전용) ────────────────────────────
+let selectedCol = -1;
+
+function showColumnPropsModal(colIdx) {
+  selectedCol = colIdx;
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  const col = sheet.columns[colIdx];
+  if (!col) return;
+
+  showModalFromTemplate('컬럼 속성: ' + col.col_header, 'col-props-tpl');
+  setTimeout(() => {
+    const hdr = document.getElementById('cp-header');
+    const tp = document.getElementById('cp-type');
+    const wd = document.getElementById('cp-width');
+    const ro = document.getElementById('cp-readonly');
+    if (hdr) hdr.value = col.col_header;
+    if (tp) tp.value = col.col_type;
+    if (wd) wd.value = col.width || 120;
+    if (ro) ro.checked = !!col.is_readonly;
+  }, 50);
+}
+
+async function applyColProps() {
+  if (selectedCol < 0) return;
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  const col = sheet.columns[selectedCol];
+  if (!col) return;
+  const payload = {
+    col_header: document.getElementById('cp-header').value,
+    col_type: document.getElementById('cp-type').value,
+    width: parseInt(document.getElementById('cp-width').value) || 120,
+    is_readonly: document.getElementById('cp-readonly').checked ? 1 : 0,
+  };
+  const res = await apiFetch(
+    `/api/admin/workspaces/${workspaceData.id}/sheets/${sheet.id}/columns/${col.col_index}`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  );
+  if (res.ok) {
+    const result = await res.json();
+    // 서버 응답으로 컬럼 데이터 갱신
+    Object.assign(col, payload);
+    if (result.data && result.data.id) col.id = result.data.id;
+    if (result.template_sheet_id) sheet.template_sheet_id = result.template_sheet_id;
+    closeModal();
+    showToast('컬럼 속성이 저장되었습니다', 'success');
+    const container = document.getElementById('spreadsheet');
+    const ths = container.querySelectorAll('thead td');
+    if (ths[selectedCol + 1]) ths[selectedCol + 1].textContent = payload.col_header;
+  } else {
+    const e = await res.json().catch(() => ({}));
+    showToast(e.detail || '저장 실패', 'error');
+  }
+}
+
+async function deleteColumnFromModal() {
+  if (selectedCol < 0) return;
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  const col = sheet.columns[selectedCol];
+  if (!col) return;
+  if (!confirm(`"${col.col_header}" 컬럼과 해당 셀 데이터를 삭제하시겠습니까?`)) return;
+  const res = await apiFetch(
+    `/api/admin/workspaces/${workspaceData.id}/sheets/${sheet.id}/columns/${col.col_index}`,
+    { method: 'DELETE' }
+  );
+  if (res.ok || res.status === 204) {
+    sheet.columns.splice(selectedCol, 1);
+    selectedCol = -1;
+    closeModal();
+    showToast('컬럼이 삭제되었습니다', 'success');
+    loadSheet(currentSheetIndex);
+  } else {
+    const e = await res.json().catch(() => ({}));
+    showToast(e.detail || '삭제 실패', 'error');
+  }
 }
 
 // Keep-alive

@@ -334,6 +334,7 @@ async def workspace_page(workspace_id: str, request: Request):
                 "id": s.id,
                 "sheet_index": s.sheet_index,
                 "sheet_name": s.sheet_name,
+                "template_sheet_id": s.template_sheet_id,
                 "columns": cols,
             })
 
@@ -341,6 +342,7 @@ async def workspace_page(workspace_id: str, request: Request):
             "id": ws.id,
             "name": ws.name,
             "status": ws.status,
+            "template_id": ws.template_id,
             "sheets": sheets_data,
         }
 

@@ -363,6 +363,149 @@ async def update_ws_sheet_col_widths(
     return {"message": "col_widths saved"}
 
 
+class ColumnPropsUpdate(BaseModel):
+    col_header: Optional[str] = None
+    col_type: Optional[str] = None
+    width: Optional[int] = None
+    is_readonly: Optional[int] = None
+
+
+@admin_router.patch("/{workspace_id}/sheets/{sheet_id}/columns/{col_index}")
+async def update_ws_column_props(
+    workspace_id: str,
+    sheet_id: str,
+    col_index: int,
+    body: ColumnPropsUpdate,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    """워크스페이스 시트 컬럼 속성 변경 (template_sheet_id 없으면 자동 생성)"""
+    ws_sheet = db.query(WorkspaceSheet).filter(
+        WorkspaceSheet.id == sheet_id,
+        WorkspaceSheet.workspace_id == workspace_id,
+    ).first()
+    if not ws_sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # template_sheet_id가 없으면 자동 생성
+    if not ws_sheet.template_sheet_id:
+        template_id = ws.template_id
+        if not template_id:
+            # 워크스페이스에 연결된 템플릿이 없으면 새로 생성
+            tmpl = Template(
+                name=f"_auto_{ws.name}",
+                created_by=current_user.id,
+            )
+            db.add(tmpl)
+            db.flush()
+            template_id = tmpl.id
+            ws.template_id = template_id
+
+        # 새 template_sheet 생성
+        tmpl_sheet = TemplateSheet(
+            template_id=template_id,
+            sheet_index=ws_sheet.sheet_index,
+            sheet_name=ws_sheet.sheet_name,
+        )
+        db.add(tmpl_sheet)
+        db.flush()
+
+        # 현재 시트의 셀 데이터에서 최대 컬럼 수 파악
+        from sqlalchemy import func
+        max_col = db.query(func.max(WorkspaceCell.col_index)).filter(
+            WorkspaceCell.sheet_id == ws_sheet.id
+        ).scalar()
+        num_cols = max((max_col + 1) if max_col is not None else 0, col_index + 1, 5)
+
+        # 컬럼 자동 생성
+        for ci in range(num_cols):
+            tc = TemplateColumn(
+                sheet_id=tmpl_sheet.id,
+                col_index=ci,
+                col_header=get_column_letter(ci + 1),
+                col_type="text",
+                width=120,
+                is_readonly=0,
+            )
+            db.add(tc)
+
+        ws_sheet.template_sheet_id = tmpl_sheet.id
+        db.flush()
+
+    # 이제 template_sheet_id가 있으므로 해당 컬럼 찾기
+    col = db.query(TemplateColumn).filter(
+        TemplateColumn.sheet_id == ws_sheet.template_sheet_id,
+        TemplateColumn.col_index == col_index,
+    ).first()
+    if not col:
+        # 해당 인덱스의 컬럼이 없으면 생성
+        col = TemplateColumn(
+            sheet_id=ws_sheet.template_sheet_id,
+            col_index=col_index,
+            col_header=get_column_letter(col_index + 1),
+            col_type="text",
+            width=120,
+            is_readonly=0,
+        )
+        db.add(col)
+        db.flush()
+
+    # 속성 업데이트
+    if body.col_header is not None:
+        col.col_header = body.col_header
+    if body.col_type is not None:
+        col.col_type = body.col_type
+    if body.width is not None:
+        col.width = body.width
+    if body.is_readonly is not None:
+        col.is_readonly = body.is_readonly
+    db.commit()
+
+    return {
+        "data": {
+            "id": col.id,
+            "col_index": col.col_index,
+            "col_header": col.col_header,
+            "col_type": col.col_type,
+            "width": col.width,
+            "is_readonly": bool(col.is_readonly),
+        },
+        "template_sheet_id": ws_sheet.template_sheet_id,
+    }
+
+
+@admin_router.delete("/{workspace_id}/sheets/{sheet_id}/columns/{col_index}", status_code=204)
+async def delete_ws_column(
+    workspace_id: str,
+    sheet_id: str,
+    col_index: int,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    """워크스페이스 시트 컬럼 삭제"""
+    ws_sheet = db.query(WorkspaceSheet).filter(
+        WorkspaceSheet.id == sheet_id,
+        WorkspaceSheet.workspace_id == workspace_id,
+    ).first()
+    if not ws_sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    if not ws_sheet.template_sheet_id:
+        raise HTTPException(status_code=400, detail="이 시트에는 편집 가능한 컬럼이 없습니다")
+
+    col = db.query(TemplateColumn).filter(
+        TemplateColumn.sheet_id == ws_sheet.template_sheet_id,
+        TemplateColumn.col_index == col_index,
+    ).first()
+    if not col:
+        raise HTTPException(status_code=404, detail="Column not found")
+    db.delete(col)
+    db.commit()
+
+
 @admin_router.patch("/{workspace_id}/sheets/{sheet_id}/freeze")
 async def update_ws_sheet_freeze(
     workspace_id: str,

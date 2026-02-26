@@ -1028,6 +1028,12 @@ function buildContextMenu(ctx) {
       items.push({ title: '내림차순 정렬', onclick: function() { sortColumn(ctx, cx, false); } });
     }
 
+    // 컬럼 속성 (onColumnProps 콜백이 있고 열이 식별 가능할 때)
+    if (ctx.onColumnProps && cx !== null && !isNaN(cx)) {
+      items.push({ type: 'line' });
+      items.push({ title: '컬럼 속성', onclick: function() { ctx.onColumnProps(cx); } });
+    }
+
     // 메모 추가/편집
     if (ctx.isEditable() && cx !== null && cy !== null && !isNaN(cx) && !isNaN(cy)) {
       items.push({ type: 'line' });

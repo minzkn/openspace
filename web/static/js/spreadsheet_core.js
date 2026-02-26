@@ -1148,15 +1148,11 @@ function initAutofill(ctx) {
     container.appendChild(handle);
   }
 
-  let isDragging = false;
-  let startRow = 0, startCol = 0, endRow = 0;
-
   function positionHandle() {
     const ss = ctx.getSpreadsheet();
     if (!ss || !ctx.isEditable()) { handle.style.display = 'none'; return; }
     const sel = ctx.getSelection();
     try {
-      const cellName = colIndexToLetter(sel.x2) + (sel.y2 + 1);
       const td = container.querySelector('td[data-x="' + sel.x2 + '"][data-y="' + sel.y2 + '"]');
       if (td) {
         const rect = td.getBoundingClientRect();
@@ -1170,45 +1166,65 @@ function initAutofill(ctx) {
     } catch(e) { handle.style.display = 'none'; }
   }
 
-  // Reposition after selection changes
   ctx._positionAutofillHandle = positionHandle;
 
   handle.addEventListener('mousedown', function(e) {
     e.preventDefault();
     e.stopPropagation();
-    isDragging = true;
+    const ss = ctx.getSpreadsheet();
+    if (!ss) return;
     const sel = ctx.getSelection();
-    startRow = sel.y1;
-    startCol = sel.x1;
-    endRow = sel.y2;
+    // 드래그 방향 결정용 변수
+    var fillDir = null;  // 'down', 'up', 'right', 'left'
+    var fillEnd = { row: sel.y2, col: sel.x2 };
     handle.classList.add('dragging');
 
     function onMouseMove(ev) {
-      const ss = ctx.getSpreadsheet();
-      if (!ss) return;
-      // Find which row the mouse is over
-      const tds = container.querySelectorAll('td[data-x="' + sel.x2 + '"]');
-      for (const td of tds) {
-        const rect = td.getBoundingClientRect();
-        if (ev.clientY >= rect.top && ev.clientY <= rect.bottom) {
-          const newRow = parseInt(td.getAttribute('data-y'));
-          if (!isNaN(newRow) && newRow > sel.y2) {
-            endRow = newRow;
-            // Visual highlight
-            try { ss.updateSelectionFromCoords(sel.x1, sel.y1, sel.x2, newRow); } catch(e) {}
-          }
-          break;
-        }
+      if (!ctx.getSpreadsheet()) return;
+      // 마우스가 올라간 셀 찾기
+      var target = document.elementFromPoint(ev.clientX, ev.clientY);
+      if (!target) return;
+      var td = target.closest ? target.closest('td[data-x][data-y]') : null;
+      if (!td) return;
+      var cx = parseInt(td.getAttribute('data-x'));
+      var cy = parseInt(td.getAttribute('data-y'));
+      if (isNaN(cx) || isNaN(cy)) return;
+
+      // 선택 영역 밖인 방향 결정 (가장 크게 벗어난 방향 우선)
+      var dDown = cy > sel.y2 ? cy - sel.y2 : 0;
+      var dUp = cy < sel.y1 ? sel.y1 - cy : 0;
+      var dRight = cx > sel.x2 ? cx - sel.x2 : 0;
+      var dLeft = cx < sel.x1 ? sel.x1 - cx : 0;
+      var maxD = Math.max(dDown, dUp, dRight, dLeft);
+      if (maxD === 0) {
+        // 선택 영역 내부 — 원래 선택 복원
+        fillDir = null;
+        fillEnd = { row: sel.y2, col: sel.x2 };
+        try { ss.updateSelectionFromCoords(sel.x1, sel.y1, sel.x2, sel.y2); } catch(e) {}
+        return;
+      }
+
+      if (maxD === dDown) {
+        fillDir = 'down'; fillEnd = { row: cy, col: sel.x2 };
+        try { ss.updateSelectionFromCoords(sel.x1, sel.y1, sel.x2, cy); } catch(e) {}
+      } else if (maxD === dUp) {
+        fillDir = 'up'; fillEnd = { row: cy, col: sel.x2 };
+        try { ss.updateSelectionFromCoords(sel.x1, cy, sel.x2, sel.y2); } catch(e) {}
+      } else if (maxD === dRight) {
+        fillDir = 'right'; fillEnd = { row: sel.y2, col: cx };
+        try { ss.updateSelectionFromCoords(sel.x1, sel.y1, cx, sel.y2); } catch(e) {}
+      } else {
+        fillDir = 'left'; fillEnd = { row: sel.y2, col: cx };
+        try { ss.updateSelectionFromCoords(cx, sel.y1, sel.x2, sel.y2); } catch(e) {}
       }
     }
 
     function onMouseUp() {
-      isDragging = false;
       handle.classList.remove('dragging');
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
-      if (endRow > sel.y2) {
-        _performAutofill(ctx, sel.x1, sel.x2, sel.y1, sel.y2, endRow);
+      if (fillDir) {
+        _performAutofill(ctx, sel.x1, sel.x2, sel.y1, sel.y2, fillDir, fillEnd);
       }
       positionHandle();
     }
@@ -1218,32 +1234,71 @@ function initAutofill(ctx) {
   });
 }
 
-function _performAutofill(ctx, x1, x2, y1, y2, targetRow) {
+// dir: 'down' | 'up' | 'right' | 'left'
+function _performAutofill(ctx, x1, x2, y1, y2, dir, end) {
   const ss = ctx.getSpreadsheet();
   if (!ss) return;
-  const srcHeight = y2 - y1 + 1;
   const changes = [];
 
   if (typeof _suppressOnChange !== 'undefined') _suppressOnChange = true;
   try {
-    for (let c = x1; c <= x2; c++) {
-      const srcVals = [];
-      for (let r = y1; r <= y2; r++) {
-        try { srcVals.push(ss.getValueFromCoords(c, r) || ''); } catch(e) { srcVals.push(''); }
-      }
-      const pattern = _detectPattern(srcVals);
-      for (let r = y2 + 1; r <= targetRow; r++) {
-        const offset = r - y1;
-        let newVal;
-        if (pattern.type === 'number_seq') {
-          newVal = String(pattern.start + pattern.step * offset);
-        } else {
-          newVal = srcVals[offset % srcHeight];
+    if (dir === 'down' || dir === 'up') {
+      // 세로 채우기: 각 열에 대해 소스 열 값으로 패턴 감지
+      for (let c = x1; c <= x2; c++) {
+        const srcVals = [];
+        for (let r = y1; r <= y2; r++) {
+          try { srcVals.push(ss.getValueFromCoords(c, r) || ''); } catch(e) { srcVals.push(''); }
         }
-        let oldVal = '';
-        try { oldVal = ss.getValueFromCoords(c, r) || ''; } catch(e) {}
-        try { ss.setValueFromCoords(c, r, newVal); } catch(e) {}
-        changes.push({ row: r, col: c, oldVal, newVal });
+        const pattern = _detectPattern(srcVals);
+        if (dir === 'down') {
+          for (let r = y2 + 1; r <= end.row; r++) {
+            const offset = r - y1;
+            const newVal = _patternValue(pattern, srcVals, offset);
+            let oldVal = '';
+            try { oldVal = ss.getValueFromCoords(c, r) || ''; } catch(e) {}
+            try { ss.setValueFromCoords(c, r, newVal); } catch(e) {}
+            changes.push({ row: r, col: c, oldVal, newVal });
+          }
+        } else {
+          // up: y1-1 부터 end.row 까지 역순
+          for (let r = y1 - 1; r >= end.row; r--) {
+            const offset = y1 - r;  // 1, 2, 3, ...
+            const newVal = _patternValueReverse(pattern, srcVals, offset);
+            let oldVal = '';
+            try { oldVal = ss.getValueFromCoords(c, r) || ''; } catch(e) {}
+            try { ss.setValueFromCoords(c, r, newVal); } catch(e) {}
+            changes.push({ row: r, col: c, oldVal, newVal });
+          }
+        }
+      }
+    } else {
+      // 가로 채우기: 각 행에 대해 소스 행 값으로 패턴 감지
+      for (let r = y1; r <= y2; r++) {
+        const srcVals = [];
+        for (let c = x1; c <= x2; c++) {
+          try { srcVals.push(ss.getValueFromCoords(c, r) || ''); } catch(e) { srcVals.push(''); }
+        }
+        const pattern = _detectPattern(srcVals);
+        if (dir === 'right') {
+          for (let c = x2 + 1; c <= end.col; c++) {
+            const offset = c - x1;
+            const newVal = _patternValue(pattern, srcVals, offset);
+            let oldVal = '';
+            try { oldVal = ss.getValueFromCoords(c, r) || ''; } catch(e) {}
+            try { ss.setValueFromCoords(c, r, newVal); } catch(e) {}
+            changes.push({ row: r, col: c, oldVal, newVal });
+          }
+        } else {
+          // left: x1-1 부터 end.col 까지 역순
+          for (let c = x1 - 1; c >= end.col; c--) {
+            const offset = x1 - c;  // 1, 2, 3, ...
+            const newVal = _patternValueReverse(pattern, srcVals, offset);
+            let oldVal = '';
+            try { oldVal = ss.getValueFromCoords(c, r) || ''; } catch(e) {}
+            try { ss.setValueFromCoords(c, r, newVal); } catch(e) {}
+            changes.push({ row: r, col: c, oldVal, newVal });
+          }
+        }
       }
     }
   } finally {
@@ -1256,9 +1311,27 @@ function _performAutofill(ctx, x1, x2, y1, y2, targetRow) {
   }
 }
 
+// 정방향 패턴 값 (down/right)
+function _patternValue(pattern, srcVals, offset) {
+  if (pattern.type === 'number_seq') {
+    return String(pattern.start + pattern.step * offset);
+  }
+  return srcVals[offset % srcVals.length];
+}
+
+// 역방향 패턴 값 (up/left)
+function _patternValueReverse(pattern, srcVals, offset) {
+  if (pattern.type === 'number_seq') {
+    return String(pattern.start - pattern.step * offset);
+  }
+  // 반복 패턴: 역순으로 순환
+  var len = srcVals.length;
+  var idx = ((len - (offset % len)) % len);
+  return srcVals[idx];
+}
+
 function _detectPattern(values) {
   if (values.length === 0) return { type: 'repeat' };
-  // Check if all values are non-empty numbers (빈 문자열은 0으로 오감지 방지)
   if (values.some(v => v === '' || v === null || v === undefined)) return { type: 'repeat' };
   const nums = values.map(Number);
   if (nums.every(n => !isNaN(n))) {

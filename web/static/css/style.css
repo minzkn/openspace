@@ -208,12 +208,13 @@ a { text-decoration: none; color: inherit; }
 
 .ws-activity { font-size: 12px; color: var(--text-muted); min-width: 120px; }
 
-.sheet-tabs-row { display: flex; align-items: flex-end; gap: 4px; border-bottom: 2px solid var(--border); margin-bottom: 4px; }
-.sheet-tabs { display: flex; gap: 2px; padding: 4px 0 0; overflow-x: auto; flex: 1; }
-.sheet-tab { display: flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: var(--radius) var(--radius) 0 0; cursor: pointer; font-size: 13px; background: var(--bg); border: 1px solid var(--border); border-bottom: none; white-space: nowrap; }
+.sheet-tabs-wrap { display: flex; align-items: center; gap: 2px; border-bottom: 2px solid var(--border); padding-bottom: 0; margin-bottom: 4px; overflow-x: auto; flex-wrap: nowrap; }
+.sheet-tab { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: var(--radius) var(--radius) 0 0; cursor: pointer; font-size: 13px; background: var(--bg); border: 1px solid var(--border); border-bottom: none; white-space: nowrap; flex-shrink: 0; }
 .sheet-tab.active { background: var(--surface); border-color: var(--primary); color: var(--primary); font-weight: 600; }
 .tab-del { font-size: 14px; color: #94a3b8; cursor: pointer; padding: 0 2px; }
 .tab-del:hover { color: var(--danger); }
+.sheet-add-btn { padding: 5px 10px; border: 1px dashed var(--border); border-radius: 4px; cursor: pointer; font-size: 18px; color: var(--text-muted); background: none; }
+.sheet-add-btn:hover { color: var(--primary); border-color: var(--primary); }
 
 #spreadsheet-container { position: relative; width: 100%; }
 #spreadsheet { overflow: auto; }
@@ -389,7 +390,7 @@ a { text-decoration: none; color: inherit; }
 /* ---- Print styles ---- */
 @media print {
   .sidebar, .topbar, .format-toolbar, .formula-bar, .find-panel,
-  .status-bar, .workspace-header, .workspace-actions, .sheet-tabs-row,
+  .status-bar, .workspace-header, .workspace-actions, .sheet-tabs-wrap,
   .editor-topbar, .col-panel, .sheet-tabs-wrap, .save-indicator,
   .closed-overlay, .autofill-handle, #toast-container,
   .btn, .modal-overlay { display: none !important; }

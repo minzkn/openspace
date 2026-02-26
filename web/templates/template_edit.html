@@ -192,16 +192,16 @@
 
 <!-- 시트 이름 변경 모달 -->
 <template id="rename-sheet-tpl">
-  <form onsubmit="submitRenameSheet(event); return false;" style="display:flex;flex-direction:column;gap:12px">
+  <div style="display:flex;flex-direction:column;gap:12px">
     <div class="form-group">
       <label>시트 이름</label>
-      <input type="text" id="f-sheet-name" required>
+      <input type="text" id="f-sheet-name">
     </div>
     <div class="form-actions">
       <button type="button" class="btn btn-ghost" onclick="closeModal()">취소</button>
-      <button type="submit" class="btn btn-primary">변경</button>
+      <button type="button" class="btn btn-primary" onclick="submitRenameSheet()">변경</button>
     </div>
-  </form>
+  </div>
 </template>
 
 <script id="template-data" type="application/json">{{ template_data_json | safe }}</script>

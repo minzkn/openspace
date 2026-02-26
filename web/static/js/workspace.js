@@ -207,6 +207,14 @@ function renderTabs() {
       <span>${esc(s.sheet_name)}</span>${delBtn}
     </div>`;
   }).join('');
+  if (IS_ADMIN) {
+    const addBtn = document.createElement('button');
+    addBtn.className = 'sheet-add-btn';
+    addBtn.textContent = '+';
+    addBtn.title = '시트 추가';
+    addBtn.onclick = addWsSheet;
+    tabsEl.appendChild(addBtn);
+  }
 }
 
 function handleTabClick(e, index) {
@@ -600,8 +608,10 @@ function handleWsMessage(msg) {
     return;
   }
   if (msg.type === 'sheet_added') {
-    sheets.push(msg.sheet);
-    renderTabs();
+    if (!sheets.find(s => s.id === msg.sheet.id)) {
+      sheets.push(msg.sheet);
+      renderTabs();
+    }
     showToast(`시트 "${msg.sheet.sheet_name}" 추가됨`, 'info');
     return;
   }
@@ -858,7 +868,9 @@ async function addWsSheet() {
   );
   if (res.ok) {
     const { data: newSheet } = await res.json();
-    sheets.push(newSheet);
+    if (!sheets.find(s => s.id === newSheet.id)) {
+      sheets.push(newSheet);
+    }
     renderTabs();
     switchSheet(sheets.length - 1);
     showToast(`"${name}" 시트가 추가되었습니다`, 'success');
@@ -877,19 +889,20 @@ function renameWsSheet(index) {
       inp.value = sheets[index].sheet_name;
       inp.focus();
       inp.select();
-      const form = inp.closest('form');
-      if (form) {
-        form.onsubmit = function(ev) { ev.preventDefault(); submitRenameWsSheet(ev); return false; };
-      }
+      inp.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); submitRenameWsSheet(); }
+        if (ev.key === 'Escape') { ev.preventDefault(); closeModal(); }
+      });
     }
   }, 50);
 }
 
-async function submitRenameWsSheet(e) {
-  if (e && e.preventDefault) e.preventDefault();
+async function submitRenameWsSheet() {
   try {
-    const newName = document.getElementById('f-ws-sheet-name').value.trim();
-    if (!newName) return;
+    const inp = document.getElementById('f-ws-sheet-name');
+    if (!inp) return;
+    const newName = inp.value.trim();
+    if (!newName) { showToast('시트 이름을 입력하세요', 'error'); return; }
     const sheet = sheets[renamingWsSheetIndex];
     if (!sheet) { showToast('시트를 찾을 수 없습니다', 'error'); return; }
     const res = await apiFetch(
@@ -919,7 +932,8 @@ async function deleteWsSheet(index) {
     { method: 'DELETE' }
   );
   if (res.ok || res.status === 204) {
-    sheets.splice(index, 1);
+    const delIdx = sheets.findIndex(s => s.id === sheet.id);
+    if (delIdx >= 0) sheets.splice(delIdx, 1);
     if (currentSheetIndex >= sheets.length) currentSheetIndex = sheets.length - 1;
     renderTabs();
     loadSheet(currentSheetIndex);

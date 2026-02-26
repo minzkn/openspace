@@ -30,12 +30,7 @@
 </div>
 
 <!-- 시트 탭 -->
-<div class="sheet-tabs-row">
-  <div class="sheet-tabs" id="sheet-tabs"></div>
-  {% if is_admin %}
-  <button class="btn btn-sm btn-ghost" onclick="addWsSheet()" title="시트 추가" style="padding:4px 8px;font-size:18px">+</button>
-  {% endif %}
-</div>
+<div class="sheet-tabs-wrap" id="sheet-tabs"></div>
 
 <!-- 포맷 툴바 -->
 <div class="format-toolbar" id="format-toolbar" style="display:none">
@@ -156,16 +151,16 @@
 
 <!-- 시트 이름변경 모달 -->
 <template id="rename-ws-sheet-tpl">
-  <form onsubmit="submitRenameWsSheet(event); return false;" style="display:flex;flex-direction:column;gap:12px">
+  <div style="display:flex;flex-direction:column;gap:12px">
     <div class="form-group">
       <label>시트 이름</label>
-      <input type="text" id="f-ws-sheet-name" required>
+      <input type="text" id="f-ws-sheet-name">
     </div>
     <div class="form-actions">
       <button type="button" class="btn btn-ghost" onclick="closeModal()">취소</button>
-      <button type="submit" class="btn btn-primary">변경</button>
+      <button type="button" class="btn btn-primary" onclick="submitRenameWsSheet()">변경</button>
     </div>
-  </form>
+  </div>
 </template>
 
 <script id="workspace-data" type="application/json">{{ workspace_data_json | safe }}</script>

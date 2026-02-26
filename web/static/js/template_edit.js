@@ -513,19 +513,20 @@ function renameSheet(index) {
       inp.value = sheets[index].sheet_name;
       inp.focus();
       inp.select();
-      const form = inp.closest('form');
-      if (form) {
-        form.onsubmit = function(ev) { ev.preventDefault(); submitRenameSheet(ev); return false; };
-      }
+      inp.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); submitRenameSheet(); }
+        if (ev.key === 'Escape') { ev.preventDefault(); closeModal(); }
+      });
     }
   }, 50);
 }
 
-async function submitRenameSheet(e) {
-  if (e && e.preventDefault) e.preventDefault();
+async function submitRenameSheet() {
   try {
-    const newName = document.getElementById('f-sheet-name').value.trim();
-    if (!newName) return;
+    const inp = document.getElementById('f-sheet-name');
+    if (!inp) return;
+    const newName = inp.value.trim();
+    if (!newName) { showToast('시트 이름을 입력하세요', 'error'); return; }
     const sheet = sheets[renamingSheetIndex];
     if (!sheet) { showToast('시트를 찾을 수 없습니다', 'error'); return; }
     const res = await apiFetch(

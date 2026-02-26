@@ -505,14 +505,17 @@ function registerShortcuts(ctx) {
     const tag = e.target.tagName;
     const isInput = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
 
-    // Escape: close find panel
+    // Formula bar Enter/Escape handled separately
+    if (e.target.id === 'formula-input') return;
+
+    // Escape in inputs (modal, find panel etc.): let the element handle it
+    if (e.key === 'Escape' && isInput) return;
+
+    // Escape: close find panel (only when not in input fields)
     if (e.key === 'Escape') {
       closeFindPanel();
       return;
     }
-
-    // Formula bar Enter/Escape handled separately
-    if (e.target.id === 'formula-input') return;
 
     // Allow find panel shortcuts even in inputs
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'f') {

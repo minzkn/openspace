@@ -10,6 +10,7 @@
 {% block content %}
 <div class="workspace-header">
   <div class="workspace-info">
+    <a class="btn btn-sm btn-secondary" href="/workspaces" title="워크스페이스 목록으로 이동">목록</a>
     <span class="badge {{ workspace.status|lower }}" id="ws-status-badge">{{ workspace.status }}</span>
     <span id="ws-conn-indicator" class="conn-dot disconnected" title="연결 상태"></span>
     <span id="ws-activity" class="ws-activity"></span>

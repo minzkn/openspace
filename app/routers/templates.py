@@ -646,7 +646,7 @@ async def copy_template(
             id=str(uuid.uuid4()), template_id=new_t.id,
             sheet_index=sheet.sheet_index, sheet_name=sheet.sheet_name,
             merges=sheet.merges, row_heights=sheet.row_heights,
-            freeze_panes=sheet.freeze_panes,
+            col_widths=sheet.col_widths, freeze_panes=sheet.freeze_panes,
             conditional_formats=sheet.conditional_formats,
         )
         db.add(new_sheet)
@@ -730,6 +730,14 @@ async def get_template_sheet_snapshot(
         except Exception:
             pass
 
+    # 열 너비: col_widths (px)
+    col_widths_px: dict = {}
+    if sheet.col_widths:
+        try:
+            col_widths_px = json.loads(sheet.col_widths)
+        except Exception:
+            pass
+
     # 틀 고정 열 수
     freeze_columns = _freeze_to_cols(sheet.freeze_panes)
 
@@ -755,6 +763,7 @@ async def get_template_sheet_snapshot(
             "num_cols": num_cols,
             "merges": merges,
             "row_heights": row_heights_px,
+            "col_widths": col_widths_px,
             "freeze_columns": freeze_columns,
             "styles": styles,
             "comments": comments,
@@ -853,6 +862,30 @@ async def update_sheet_row_heights(
     sheet.row_heights = json.dumps(body.row_heights) if body.row_heights else None
     db.commit()
     return {"message": "row_heights saved"}
+
+
+class ColWidthsUpdate(BaseModel):
+    col_widths: Optional[dict] = None  # e.g. {"0": 150, "3": 200} (col_index_str → px)
+
+
+@router.patch("/{template_id}/sheets/{sheet_id}/col-widths")
+async def update_sheet_col_widths(
+    template_id: str,
+    sheet_id: str,
+    body: ColWidthsUpdate,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    """서식 시트 열 너비 저장"""
+    sheet = db.query(TemplateSheet).filter(
+        TemplateSheet.id == sheet_id,
+        TemplateSheet.template_id == template_id,
+    ).first()
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    sheet.col_widths = json.dumps(body.col_widths) if body.col_widths else None
+    db.commit()
+    return {"message": "col_widths saved"}
 
 
 class FreezeUpdate(BaseModel):
@@ -1230,9 +1263,16 @@ async def export_template_xlsx(
         ws = wb.create_sheet(sheet.sheet_name)
         cols = sorted(sheet.columns, key=lambda c: c.col_index)
 
-        # 컬럼 너비
+        # 컬럼 너비 (col_widths 우선, 없으면 TemplateColumn.width 사용)
+        cw_override = {}
+        if sheet.col_widths:
+            try:
+                cw_override = json.loads(sheet.col_widths)
+            except Exception:
+                pass
         for col in cols:
-            ws.column_dimensions[get_column_letter(col.col_index + 1)].width = (col.width or 120) / 7
+            w = int(cw_override.get(str(col.col_index), col.width or 120))
+            ws.column_dimensions[get_column_letter(col.col_index + 1)].width = w / 7
 
         # 행 높이 복원 (pt 단위)
         if sheet.row_heights:

@@ -305,6 +305,8 @@ async function loadSheet(index) {
     tableHeight: th + 'px',
     lazyLoading: true,
     loadingSpin: true,
+    columnResize: true,
+    rowResize: true,
     allowInsertColumn: true,
     allowDeleteColumn: true,
     allowInsertRow: true,
@@ -324,6 +326,7 @@ async function loadSheet(index) {
     onselection: handleSelection,
     onmerge: handleMerge,
     onresizerow: handleResizeRow,
+    onresizecolumn: handleResizeColumn,
     contextMenu: SpreadsheetCore.buildContextMenu(ctx),
     updateTable: function(instance, cell, col, row, val, label, cellName) {
       // cellName이 없는 경우 직접 계산 (jspreadsheet 버전 호환)
@@ -349,6 +352,13 @@ async function loadSheet(index) {
   if (data.row_heights) {
     Object.entries(data.row_heights).forEach(([riStr, px]) => {
       try { spreadsheet.setHeight(parseInt(riStr), px); } catch(e) {}
+    });
+  }
+
+  // 열 너비 적용
+  if (data.col_widths) {
+    Object.entries(data.col_widths).forEach(([ciStr, px]) => {
+      try { spreadsheet.setWidth(parseInt(ciStr), px); } catch(e) {}
     });
   }
 
@@ -778,6 +788,33 @@ async function saveMerges() {
   await apiFetch(
     `/api/admin/templates/${templateData.id}/sheets/${sheet.id}/merges`,
     { method: 'PATCH', body: JSON.stringify({ merges: mergesList }) }
+  );
+}
+
+// ── 열 너비 변경 핸들러 ─────────────────────────────────────
+let colWidthSaveTimer = null;
+function handleResizeColumn(el, col, width) {
+  clearTimeout(colWidthSaveTimer);
+  colWidthSaveTimer = setTimeout(saveColWidths, 500);
+}
+
+async function saveColWidths() {
+  if (!spreadsheet) return;
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  const colWidths = {};
+  try {
+    const colgroup = spreadsheet.colgroup;
+    if (colgroup) {
+      for (let i = 0; i < colgroup.length; i++) {
+        const w = colgroup[i] && colgroup[i].getAttribute('width');
+        if (w) colWidths[String(i)] = parseInt(w);
+      }
+    }
+  } catch(e) {}
+  await apiFetch(
+    `/api/admin/templates/${templateData.id}/sheets/${sheet.id}/col-widths`,
+    { method: 'PATCH', body: JSON.stringify({ col_widths: colWidths }) }
   );
 }
 

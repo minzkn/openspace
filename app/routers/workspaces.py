@@ -142,6 +142,7 @@ async def create_workspace(
             # 템플릿 시트 메타 복사
             merges=sheet.merges,
             row_heights=sheet.row_heights,
+            col_widths=sheet.col_widths,
             freeze_panes=sheet.freeze_panes,
             conditional_formats=sheet.conditional_formats,
         )
@@ -328,6 +329,38 @@ async def update_ws_sheet_row_heights(
         "tab_id": request.headers.get("X-Tab-ID", ""),
     }, exclude=None))
     return {"message": "row_heights saved"}
+
+
+class ColWidthsUpdate(BaseModel):
+    col_widths: Optional[dict] = None  # e.g. {"0": 150, "3": 200} (col_index_str → px)
+
+
+@admin_router.patch("/{workspace_id}/sheets/{sheet_id}/col-widths")
+async def update_ws_sheet_col_widths(
+    workspace_id: str,
+    sheet_id: str,
+    body: ColWidthsUpdate,
+    request: Request,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    """워크스페이스 시트 열 너비 저장"""
+    ws_sheet = db.query(WorkspaceSheet).filter(
+        WorkspaceSheet.id == sheet_id,
+        WorkspaceSheet.workspace_id == workspace_id,
+    ).first()
+    if not ws_sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    ws_sheet.col_widths = json.dumps(body.col_widths) if body.col_widths else None
+    db.commit()
+    import asyncio
+    asyncio.create_task(hub.broadcast(workspace_id, {
+        "type": "sheet_config_updated",
+        "sheet_id": sheet_id,
+        "updated_by": current_user.username,
+        "tab_id": request.headers.get("X-Tab-ID", ""),
+    }, exclude=None))
+    return {"message": "col_widths saved"}
 
 
 @admin_router.patch("/{workspace_id}/sheets/{sheet_id}/freeze")
@@ -544,6 +577,14 @@ async def import_workspace_xlsx(
                 row_heights[str(row_num - 1)] = rd.height
         ws_sheet.row_heights = json.dumps(row_heights) if row_heights else None
 
+        col_widths: dict = {}
+        for ci in range(num_cols):
+            col_letter = get_column_letter(ci + 1)
+            col_dim = excel_ws.column_dimensions.get(col_letter)
+            if col_dim and col_dim.width and col_dim.width > 0:
+                col_widths[str(ci)] = max(40, min(int(col_dim.width * 7), 600))
+        ws_sheet.col_widths = json.dumps(col_widths) if col_widths else None
+
         ws_sheet.freeze_panes = str(excel_ws.freeze_panes) if excel_ws.freeze_panes else None
 
         for ri, row in enumerate(all_rows[:10000]):
@@ -604,9 +645,16 @@ async def export_workspace_xlsx(
         tmpl_sheet = db.query(TemplateSheet).filter(TemplateSheet.id == ws_sheet.template_sheet_id).first()
         cols = sorted(tmpl_sheet.columns, key=lambda c: c.col_index) if tmpl_sheet else []
 
-        # 컬럼 너비
+        # 컬럼 너비 (col_widths 우선, 없으면 TemplateColumn.width 사용)
+        cw_override = {}
+        if ws_sheet.col_widths:
+            try:
+                cw_override = json.loads(ws_sheet.col_widths)
+            except Exception:
+                pass
         for col in cols:
-            excel_ws.column_dimensions[get_column_letter(col.col_index + 1)].width = (col.width or 120) / 7
+            w = int(cw_override.get(str(col.col_index), col.width or 120))
+            excel_ws.column_dimensions[get_column_letter(col.col_index + 1)].width = w / 7
 
         # 행 높이 복원 (pt)
         if ws_sheet.row_heights:

@@ -242,7 +242,6 @@ a { text-decoration: none; color: inherit; }
   padding: 3px 2px !important;
   letter-spacing: 0.3px !important;
   border-bottom: 2px solid #cbd5e1 !important;
-  cursor: default !important;
 }
 
 /* ---- Table actions ---- */

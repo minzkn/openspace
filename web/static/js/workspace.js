@@ -314,6 +314,8 @@ async function loadSheet(index) {
     lazyLoading: true,
     loadingSpin: true,
     editable: isEditable,
+    columnResize: true,
+    rowResize: true,
     allowInsertColumn: true,
     allowDeleteColumn: true,
     mergeCells,
@@ -333,6 +335,7 @@ async function loadSheet(index) {
     onselection: handleSelection,
     onmerge: IS_ADMIN ? handleMerge : undefined,
     onresizerow: IS_ADMIN ? handleResizeRow : undefined,
+    onresizecolumn: IS_ADMIN ? handleResizeColumn : undefined,
     contextMenu: SpreadsheetCore.buildContextMenu(ctx),
     updateTable: function(instance, cell, col, row, val, label, cellName) {
       // cellName이 없는 경우 직접 계산 (jspreadsheet 버전 호환)
@@ -358,6 +361,13 @@ async function loadSheet(index) {
   if (data.row_heights) {
     Object.entries(data.row_heights).forEach(([riStr, px]) => {
       try { spreadsheet.setHeight(parseInt(riStr), px); } catch(e) {}
+    });
+  }
+
+  // 열 너비 적용
+  if (data.col_widths) {
+    Object.entries(data.col_widths).forEach(([ciStr, px]) => {
+      try { spreadsheet.setWidth(parseInt(ciStr), px); } catch(e) {}
     });
   }
 
@@ -1002,6 +1012,33 @@ async function saveMerges() {
   await apiFetch(
     `/api/admin/workspaces/${workspaceData.id}/sheets/${sheet.id}/merges`,
     { method: 'PATCH', body: JSON.stringify({ merges: mergesList }) }
+  );
+}
+
+// ── 열 너비 변경 핸들러 ─────────────────────────────────────
+let colWidthSaveTimer = null;
+function handleResizeColumn(el, col, width) {
+  clearTimeout(colWidthSaveTimer);
+  colWidthSaveTimer = setTimeout(saveColWidths, 500);
+}
+
+async function saveColWidths() {
+  if (!spreadsheet || !IS_ADMIN) return;
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  const colWidths = {};
+  try {
+    const colgroup = spreadsheet.colgroup;
+    if (colgroup) {
+      for (let i = 0; i < colgroup.length; i++) {
+        const w = colgroup[i] && colgroup[i].getAttribute('width');
+        if (w) colWidths[String(i)] = parseInt(w);
+      }
+    }
+  } catch(e) {}
+  await apiFetch(
+    `/api/admin/workspaces/${workspaceData.id}/sheets/${sheet.id}/col-widths`,
+    { method: 'PATCH', body: JSON.stringify({ col_widths: colWidths }) }
   );
 }
 

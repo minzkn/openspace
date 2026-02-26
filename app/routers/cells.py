@@ -206,6 +206,14 @@ async def get_snapshot(
         except Exception:
             pass
 
+    # 열 너비: col_widths (px)
+    col_widths_px: dict = {}
+    if ws_sheet.col_widths:
+        try:
+            col_widths_px = json.loads(ws_sheet.col_widths)
+        except Exception:
+            pass
+
     # 틀 고정
     freeze_columns = _freeze_to_cols(ws_sheet.freeze_panes)
 
@@ -224,6 +232,7 @@ async def get_snapshot(
             "num_cols": num_cols,
             "merges": merges,
             "row_heights": row_heights_px,
+            "col_widths": col_widths_px,
             "freeze_columns": freeze_columns,
             "styles": styles,
             "comments": comments,

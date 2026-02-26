@@ -103,6 +103,7 @@ class TemplateSheet(Base):
     sheet_name = Column(String, nullable=False)
     merges = Column(Text)       # JSON list of xlsx range strings e.g. ["A1:B2", "C3:D4"]
     row_heights = Column(Text)  # JSON dict {row_index_str: height_pt} e.g. {"0": 30.0}
+    col_widths = Column(Text)   # JSON dict {col_index_str: width_px} e.g. {"0": 150}
     freeze_panes = Column(Text) # xlsx freeze panes string e.g. "B2" (freeze col A)
     conditional_formats = Column(Text)  # JSON array of conditional format rules
 
@@ -191,6 +192,7 @@ class WorkspaceSheet(Base):
     sheet_name = Column(String, nullable=False)
     merges = Column(Text)       # JSON list of xlsx range strings e.g. ["A1:B2", "C3:D4"]
     row_heights = Column(Text)  # JSON dict {row_index_str: height_pt} e.g. {"0": 30.0}
+    col_widths = Column(Text)   # JSON dict {col_index_str: width_px} e.g. {"0": 150}
     freeze_panes = Column(Text) # xlsx freeze panes string e.g. "B2" (freeze col A)
     conditional_formats = Column(Text)  # JSON array of conditional format rules
 

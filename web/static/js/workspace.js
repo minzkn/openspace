@@ -1020,6 +1020,7 @@ let colWidthSaveTimer = null;
 function handleResizeColumn(el, col, width) {
   clearTimeout(colWidthSaveTimer);
   colWidthSaveTimer = setTimeout(saveColWidths, 500);
+  if (ctx._positionAutofillHandle) ctx._positionAutofillHandle();
 }
 
 async function saveColWidths() {
@@ -1048,6 +1049,7 @@ function handleResizeRow(el, row, height) {
   // 디바운스: 연속 리사이즈 시 마지막 변경만 저장
   clearTimeout(rowHeightSaveTimer);
   rowHeightSaveTimer = setTimeout(saveRowHeights, 500);
+  if (ctx._positionAutofillHandle) ctx._positionAutofillHandle();
 }
 
 async function saveRowHeights() {

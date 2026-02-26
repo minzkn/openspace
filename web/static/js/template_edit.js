@@ -796,6 +796,7 @@ let colWidthSaveTimer = null;
 function handleResizeColumn(el, col, width) {
   clearTimeout(colWidthSaveTimer);
   colWidthSaveTimer = setTimeout(saveColWidths, 500);
+  if (ctx._positionAutofillHandle) ctx._positionAutofillHandle();
 }
 
 async function saveColWidths() {
@@ -823,6 +824,7 @@ let rowHeightSaveTimer = null;
 function handleResizeRow(el, row, height) {
   clearTimeout(rowHeightSaveTimer);
   rowHeightSaveTimer = setTimeout(saveRowHeights, 500);
+  if (ctx._positionAutofillHandle) ctx._positionAutofillHandle();
 }
 
 async function saveRowHeights() {

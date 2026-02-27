@@ -339,6 +339,11 @@ def _extract_cell_style(cell, theme_colors=None) -> Optional[str]:
     if num_fmt and num_fmt != 'General':
         style['numFmt'] = num_fmt
 
+    # Cell protection (locked)
+    prot = cell.protection
+    if prot and prot.locked:
+        style['locked'] = True
+
     return json.dumps(style, ensure_ascii=False) if style else None
 
 
@@ -411,6 +416,11 @@ def _apply_cell_style(ws_cell, style_json: Optional[str]) -> None:
     # Number format
     if style.get('numFmt'):
         ws_cell.number_format = style['numFmt']
+
+    # Cell protection
+    if style.get('locked'):
+        from openpyxl.styles import Protection
+        ws_cell.protection = Protection(locked=True)
 
 
 def _style_to_css(style: dict) -> str:
@@ -494,6 +504,267 @@ def _freeze_to_cols(freeze_str: Optional[str]) -> int:
 def _pt_to_px(pt: float) -> int:
     """포인트 → 픽셀 (96dpi 기준)"""
     return round(pt * 96 / 72)
+
+
+def _freeze_to_rows(freeze_str: Optional[str]) -> int:
+    """xlsx freeze_panes 문자열 → 고정 행 수"""
+    if not freeze_str:
+        return 0
+    m = re.match(r'^[A-Z]+(\d+)$', freeze_str.upper())
+    if not m:
+        return 0
+    return max(0, int(m.group(1)) - 1)
+
+
+def _extract_conditional_formats(worksheet) -> list:
+    """openpyxl 워크시트에서 조건부 서식 규칙 추출 → JSON 배열"""
+    rules = []
+    try:
+        for cf in worksheet.conditional_formatting:
+            range_str = str(cf)
+            for rule in cf.rules:
+                entry = {"range": range_str, "type": rule.type}
+                if rule.type == "cellIs":
+                    entry["operator"] = rule.operator
+                    if rule.formula:
+                        entry["formula"] = [str(f) for f in rule.formula]
+                elif rule.type == "expression":
+                    if rule.formula:
+                        entry["formula"] = [str(f) for f in rule.formula]
+                elif rule.type == "colorScale":
+                    entry["type"] = "colorScale"
+                    try:
+                        cs = rule.colorScale
+                        colors = []
+                        for c in (cs.color or []):
+                            rgb = str(c.rgb) if c.rgb else "000000"
+                            if len(rgb) == 8: rgb = rgb[2:]
+                            colors.append(rgb)
+                        entry["colors"] = colors
+                    except Exception:
+                        entry["colors"] = []
+                    rules.append(entry)
+                    continue
+                elif rule.type == "dataBar":
+                    entry["type"] = "dataBar"
+                    try:
+                        db_rule = rule.dataBar
+                        color_rgb = "4472C4"
+                        if db_rule and db_rule.color and db_rule.color.rgb:
+                            c = str(db_rule.color.rgb)
+                            color_rgb = c[2:] if len(c) == 8 else c
+                        entry["color"] = color_rgb
+                    except Exception:
+                        entry["color"] = "4472C4"
+                    rules.append(entry)
+                    continue
+                elif rule.type == "iconSet":
+                    entry["type"] = "iconSet"
+                    try:
+                        entry["iconStyle"] = rule.iconSet.iconSet if rule.iconSet else "3TrafficLights1"
+                    except Exception:
+                        entry["iconStyle"] = "3TrafficLights1"
+                    rules.append(entry)
+                    continue
+                else:
+                    continue  # 지원하지 않는 타입
+                # 서식 추출
+                if rule.dxf:
+                    fmt = {}
+                    if rule.dxf.font:
+                        if rule.dxf.font.bold:
+                            fmt["bold"] = True
+                        if rule.dxf.font.italic:
+                            fmt["italic"] = True
+                        if rule.dxf.font.color and rule.dxf.font.color.rgb:
+                            rgb = str(rule.dxf.font.color.rgb)
+                            if len(rgb) == 8:
+                                rgb = rgb[2:]
+                            fmt["color"] = rgb
+                    if rule.dxf.fill and rule.dxf.fill.fgColor and rule.dxf.fill.fgColor.rgb:
+                        rgb = str(rule.dxf.fill.fgColor.rgb)
+                        if len(rgb) == 8:
+                            rgb = rgb[2:]
+                        fmt["bg"] = rgb
+                    entry["format"] = fmt
+                rules.append(entry)
+    except Exception:
+        pass
+    return rules
+
+
+def _apply_conditional_formats(worksheet, rules: list):
+    """JSON 규칙 배열을 openpyxl 워크시트에 적용"""
+    from openpyxl.formatting.rule import CellIsRule, FormulaRule
+    from openpyxl.styles import Font, PatternFill
+    for rule in rules:
+        try:
+            range_str = rule.get("range", "A1:A1")
+            fmt = rule.get("format", {})
+            font = None
+            fill = None
+            if fmt.get("bold") or fmt.get("italic") or fmt.get("color"):
+                font = Font(
+                    bold=fmt.get("bold", False),
+                    italic=fmt.get("italic", False),
+                    color=("FF" + fmt["color"]) if fmt.get("color") else None,
+                )
+            if fmt.get("bg"):
+                fill = PatternFill(start_color="FF" + fmt["bg"], end_color="FF" + fmt["bg"], fill_type="solid")
+
+            if rule.get("type") == "cellIs":
+                formula_vals = rule.get("formula", [])
+                worksheet.conditional_formatting.add(
+                    range_str,
+                    CellIsRule(
+                        operator=rule.get("operator", "equal"),
+                        formula=formula_vals,
+                        font=font, fill=fill,
+                    )
+                )
+            elif rule.get("type") == "expression":
+                formula_vals = rule.get("formula", [])
+                if formula_vals:
+                    worksheet.conditional_formatting.add(
+                        range_str,
+                        FormulaRule(
+                            formula=[formula_vals[0]],
+                            font=font, fill=fill,
+                        )
+                    )
+            elif rule.get("type") == "colorScale":
+                from openpyxl.formatting.rule import ColorScaleRule
+                colors_hex = rule.get("colors", [])
+                if len(colors_hex) == 2:
+                    worksheet.conditional_formatting.add(
+                        range_str,
+                        ColorScaleRule(
+                            start_color="FF" + colors_hex[0],
+                            end_color="FF" + colors_hex[1],
+                        )
+                    )
+                elif len(colors_hex) >= 3:
+                    worksheet.conditional_formatting.add(
+                        range_str,
+                        ColorScaleRule(
+                            start_color="FF" + colors_hex[0],
+                            mid_color="FF" + colors_hex[1],
+                            end_color="FF" + colors_hex[2],
+                        )
+                    )
+            elif rule.get("type") == "dataBar":
+                from openpyxl.formatting.rule import DataBarRule
+                bar_color = rule.get("color", "4472C4")
+                worksheet.conditional_formatting.add(
+                    range_str,
+                    DataBarRule(
+                        start_type="min", end_type="max",
+                        color="FF" + bar_color,
+                    )
+                )
+            elif rule.get("type") == "iconSet":
+                from openpyxl.formatting.rule import IconSetRule
+                icon_style = rule.get("iconStyle", "3TrafficLights1")
+                worksheet.conditional_formatting.add(
+                    range_str,
+                    IconSetRule(
+                        icon_style=icon_style,
+                        type="percent",
+                        values=[0, 33, 67],
+                    )
+                )
+        except Exception:
+            continue
+
+
+def _extract_data_validations(worksheet) -> list:
+    """openpyxl 워크시트에서 데이터 유효성 규칙 추출"""
+    rules = []
+    try:
+        for dv in worksheet.data_validations.dataValidation:
+            rule = {
+                "ranges": str(dv.sqref),
+                "type": dv.type or "none",
+                "operator": dv.operator,
+                "allowBlank": dv.allow_blank,
+                "showDropDown": dv.showDropDown,
+                "errorTitle": dv.errorTitle,
+                "error": dv.error,
+                "errorStyle": dv.errorStyle,
+                "promptTitle": dv.promptTitle,
+                "prompt": dv.prompt,
+            }
+            if dv.formula1:
+                rule["formula1"] = str(dv.formula1)
+            if dv.formula2:
+                rule["formula2"] = str(dv.formula2)
+            rules.append(rule)
+    except Exception:
+        pass
+    return rules
+
+
+def _apply_data_validations(worksheet, rules: list):
+    """JSON 규칙을 openpyxl 데이터 유효성으로 적용"""
+    from openpyxl.worksheet.datavalidation import DataValidation
+    for rule in rules:
+        try:
+            dv = DataValidation(
+                type=rule.get("type", "none"),
+                operator=rule.get("operator"),
+                formula1=rule.get("formula1"),
+                formula2=rule.get("formula2"),
+                allow_blank=rule.get("allowBlank", True),
+                showDropDown=rule.get("showDropDown"),
+                errorTitle=rule.get("errorTitle"),
+                error=rule.get("error"),
+                errorStyle=rule.get("errorStyle", "stop"),
+                promptTitle=rule.get("promptTitle"),
+                prompt=rule.get("prompt"),
+            )
+            dv.sqref = rule.get("ranges", "A1")
+            worksheet.add_data_validation(dv)
+        except Exception:
+            continue
+
+
+def _extract_outlines(worksheet) -> tuple:
+    """openpyxl 워크시트에서 행/열 그룹(outline) 레벨 추출"""
+    row_outlines = {}
+    col_outlines = {}
+    try:
+        for ri, rd in worksheet.row_dimensions.items():
+            if rd.outline_level and rd.outline_level > 0:
+                row_outlines[str(ri - 1)] = rd.outline_level  # 0-based
+    except Exception:
+        pass
+    try:
+        for col_letter, cd in worksheet.column_dimensions.items():
+            if cd.outline_level and cd.outline_level > 0:
+                ci = column_index_from_string(col_letter) - 1
+                col_outlines[str(ci)] = cd.outline_level
+    except Exception:
+        pass
+    return (row_outlines, col_outlines)
+
+
+def _apply_outlines(worksheet, row_outlines: dict, col_outlines: dict):
+    """JSON outline → openpyxl 행/열 그룹 적용"""
+    if row_outlines:
+        for ri_str, level in row_outlines.items():
+            try:
+                ri = int(ri_str) + 1  # 1-based
+                worksheet.row_dimensions[ri].outline_level = level
+            except Exception:
+                continue
+    if col_outlines:
+        for ci_str, level in col_outlines.items():
+            try:
+                ci = int(ci_str)
+                col_letter = get_column_letter(ci + 1)
+                worksheet.column_dimensions[col_letter].outline_level = level
+            except Exception:
+                continue
 
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -738,8 +1009,9 @@ async def get_template_sheet_snapshot(
         except Exception:
             pass
 
-    # 틀 고정 열 수
+    # 틀 고정
     freeze_columns = _freeze_to_cols(sheet.freeze_panes)
+    freeze_rows = _freeze_to_rows(sheet.freeze_panes)
 
     # 셀 메모
     comments: dict = {}
@@ -756,6 +1028,14 @@ async def get_template_sheet_snapshot(
         except Exception:
             pass
 
+    # 데이터 유효성 검사
+    data_validations = []
+    if sheet.data_validations:
+        try:
+            data_validations = json.loads(sheet.data_validations)
+        except Exception:
+            pass
+
     return {
         "data": {
             "cells": grid,
@@ -765,10 +1045,12 @@ async def get_template_sheet_snapshot(
             "row_heights": row_heights_px,
             "col_widths": col_widths_px,
             "freeze_columns": freeze_columns,
+            "freeze_rows": freeze_rows,
             "styles": styles,
             "comments": comments,
             "num_formats": num_formats,
             "conditional_formats": conditional_formats,
+            "data_validations": data_validations,
         }
     }
 
@@ -1206,24 +1488,60 @@ async def import_template_xlsx(
         if ws.freeze_panes:
             new_sheet.freeze_panes = str(ws.freeze_panes)
 
+        # 숨겨진 행/열 추출
+        hidden_rows = [row_num - 1 for row_num, rd in ws.row_dimensions.items()
+                       if rd.hidden]
+        if hidden_rows:
+            new_sheet.hidden_rows = json.dumps(hidden_rows)
+        hidden_cols = []
+        for col_letter, cd in ws.column_dimensions.items():
+            if cd.hidden:
+                try:
+                    from openpyxl.utils import column_index_from_string
+                    hidden_cols.append(column_index_from_string(col_letter) - 1)
+                except Exception:
+                    pass
+        if hidden_cols:
+            new_sheet.hidden_cols = json.dumps(hidden_cols)
+
+        # 조건부 서식 추출
+        cf_rules = _extract_conditional_formats(ws)
+        if cf_rules:
+            new_sheet.conditional_formats = json.dumps(cf_rules)
+
+        # 데이터 유효성 검사 추출
+        dv_rules = _extract_data_validations(ws)
+        if dv_rules:
+            new_sheet.data_validations = json.dumps(dv_rules)
+
+        # 행/열 그룹 (outline) 추출
+        row_outlines, col_outlines = _extract_outlines(ws)
+        if row_outlines:
+            new_sheet.outline_rows = json.dumps(row_outlines)
+        if col_outlines:
+            new_sheet.outline_cols = json.dumps(col_outlines)
+
         # 모든 행을 데이터로 저장
         for ri, row in enumerate(all_rows[:MAX_ROWS]):
             for ci in range(num_cols):
                 cell = row[ci] if ci < len(row) else None
                 if cell is None or cell.value is None:
-                    # 값 없어도 스타일이나 메모 있으면 저장
+                    # 값 없어도 스타일이나 메모/하이퍼링크 있으면 저장
                     style_json = _extract_cell_style(cell, theme_colors) if cell else None
                     comment_text = cell.comment.text.strip() if cell and cell.comment else None
-                    if style_json or comment_text:
+                    hyperlink_url = cell.hyperlink.target if cell and cell.hyperlink and cell.hyperlink.target else None
+                    if style_json or comment_text or hyperlink_url:
                         db.add(TemplateCell(
                             id=str(uuid.uuid4()), sheet_id=new_sheet.id,
                             row_index=ri, col_index=ci,
                             value=None, style=style_json, comment=comment_text,
+                            hyperlink=hyperlink_url,
                         ))
                     continue
                 raw = cell.value
                 style_json = _extract_cell_style(cell, theme_colors)
                 comment_text = cell.comment.text.strip() if cell.comment else None
+                hyperlink_url = cell.hyperlink.target if cell.hyperlink and cell.hyperlink.target else None
                 if cell.data_type == 'f' or (isinstance(raw, str) and raw.startswith("=")):
                     raw_str = str(raw)
                     formula_str = raw_str if raw_str.startswith("=") else "=" + raw_str
@@ -1231,14 +1549,14 @@ async def import_template_xlsx(
                         id=str(uuid.uuid4()), sheet_id=new_sheet.id,
                         row_index=ri, col_index=ci,
                         value=None, formula=formula_str, style=style_json,
-                        comment=comment_text,
+                        comment=comment_text, hyperlink=hyperlink_url,
                     ))
                 else:
                     db.add(TemplateCell(
                         id=str(uuid.uuid4()), sheet_id=new_sheet.id,
                         row_index=ri, col_index=ci,
                         value=_stringify_value(raw), style=style_json,
-                        comment=comment_text,
+                        comment=comment_text, hyperlink=hyperlink_url,
                     ))
 
     db.commit()
@@ -1301,6 +1619,22 @@ async def export_template_xlsx(
                     if c.comment:
                         from openpyxl.comments import Comment as XlComment
                         ws_cell.comment = XlComment(c.comment, "")
+                    if c.hyperlink:
+                        ws_cell.hyperlink = c.hyperlink
+
+        # 숨겨진 행/열 복원
+        if sheet.hidden_rows:
+            try:
+                for ri in json.loads(sheet.hidden_rows):
+                    ws.row_dimensions[ri + 1].hidden = True
+            except Exception:
+                pass
+        if sheet.hidden_cols:
+            try:
+                for ci in json.loads(sheet.hidden_cols):
+                    ws.column_dimensions[get_column_letter(ci + 1)].hidden = True
+            except Exception:
+                pass
 
         # 병합 셀 복원
         if sheet.merges:
@@ -1309,6 +1643,34 @@ async def export_template_xlsx(
                     ws.merge_cells(rng)
             except Exception:
                 pass
+
+        # 조건부 서식 복원
+        if sheet.conditional_formats:
+            try:
+                cf_rules = json.loads(sheet.conditional_formats)
+                _apply_conditional_formats(ws, cf_rules)
+            except Exception:
+                pass
+
+        # 데이터 유효성 검사 복원
+        if sheet.data_validations:
+            try:
+                dv_rules = json.loads(sheet.data_validations)
+                _apply_data_validations(ws, dv_rules)
+            except Exception:
+                pass
+
+        # 행/열 그룹 복원
+        row_ol = {}
+        col_ol = {}
+        if sheet.outline_rows:
+            try: row_ol = json.loads(sheet.outline_rows)
+            except: pass
+        if sheet.outline_cols:
+            try: col_ol = json.loads(sheet.outline_cols)
+            except: pass
+        if row_ol or col_ol:
+            _apply_outlines(ws, row_ol, col_ol)
 
         # readonly 컬럼 셀 잠금 (시트 보호 활성화)
         readonly_col_indices = {col.col_index for col in cols if col.is_readonly}

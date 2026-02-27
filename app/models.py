@@ -106,6 +106,11 @@ class TemplateSheet(Base):
     col_widths = Column(Text)   # JSON dict {col_index_str: width_px} e.g. {"0": 150}
     freeze_panes = Column(Text) # xlsx freeze panes string e.g. "B2" (freeze col A)
     conditional_formats = Column(Text)  # JSON array of conditional format rules
+    data_validations = Column(Text)  # JSON array of data validation rules
+    hidden_rows = Column(Text)  # JSON array of 0-based row indices e.g. [3, 5, 10]
+    hidden_cols = Column(Text)  # JSON array of 0-based col indices e.g. [1, 4]
+    outline_rows = Column(Text)  # JSON: {row_index: level} for row grouping
+    outline_cols = Column(Text)  # JSON: {col_index: level} for column grouping
 
     __table_args__ = (UniqueConstraint("template_id", "sheet_index"),)
 
@@ -149,6 +154,7 @@ class TemplateCell(Base):
     formula = Column(Text)
     style = Column(Text)  # JSON
     comment = Column(Text)  # cell note/comment
+    hyperlink = Column(Text)  # URL hyperlink
 
     __table_args__ = (
         UniqueConstraint("sheet_id", "row_index", "col_index"),
@@ -195,6 +201,13 @@ class WorkspaceSheet(Base):
     col_widths = Column(Text)   # JSON dict {col_index_str: width_px} e.g. {"0": 150}
     freeze_panes = Column(Text) # xlsx freeze panes string e.g. "B2" (freeze col A)
     conditional_formats = Column(Text)  # JSON array of conditional format rules
+    data_validations = Column(Text)  # JSON array of data validation rules
+    sheet_protected = Column(Integer, default=0)  # 1 = protected
+    print_settings = Column(Text)  # JSON: {paperSize, orientation, margins, scale, printArea}
+    hidden_rows = Column(Text)  # JSON array of 0-based row indices
+    hidden_cols = Column(Text)  # JSON array of 0-based col indices
+    outline_rows = Column(Text)  # JSON: {row_index: level} for row grouping
+    outline_cols = Column(Text)  # JSON: {col_index: level} for column grouping
 
     __table_args__ = (UniqueConstraint("workspace_id", "sheet_index"),)
 
@@ -213,6 +226,7 @@ class WorkspaceCell(Base):
     value = Column(Text)
     style = Column(Text)  # JSON
     comment = Column(Text)  # cell note/comment
+    hyperlink = Column(Text)  # URL hyperlink
     updated_by = Column(String, ForeignKey("users.id"))
     updated_at = Column(String, nullable=False, default=_now)
 

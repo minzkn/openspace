@@ -47,6 +47,12 @@ def apply_incremental_migrations(conn):
         "005_cell_comments.sql",
         "006_conditional_formats.sql",
         "007_col_widths.sql",
+        "008_hidden_rows_cols.sql",
+        "009_cell_hyperlinks.sql",
+        "010_data_validations.sql",
+        "011_sheet_protected.sql",
+        "012_print_settings.sql",
+        "013_outline_groups.sql",
     ]
     for fname in migrations:
         path = ROOT / "migrations" / fname

@@ -215,6 +215,17 @@ a { text-decoration: none; color: inherit; }
 .tab-del:hover { color: var(--danger); }
 .sheet-add-btn { padding: 5px 10px; border: 1px dashed var(--border); border-radius: 4px; cursor: pointer; font-size: 18px; color: var(--text-muted); background: none; }
 .sheet-add-btn:hover { color: var(--primary); border-color: var(--primary); }
+.sheet-tab.tab-dragging { opacity: .4; }
+.sheet-tab.tab-drag-over { border-color: var(--primary); box-shadow: inset 0 -2px 0 var(--primary); }
+.tab-context-menu {
+  background: #fff; border: 1px solid #ccc; border-radius: 4px;
+  box-shadow: 0 3px 10px rgba(0,0,0,.15); padding: 4px 0;
+  z-index: 10000; min-width: 120px; font-size: 13px;
+}
+.tcm-item { padding: 6px 16px; cursor: pointer; }
+.tcm-item:hover { background: #f0f4ff; }
+.tcm-danger { color: #c00; }
+.tcm-danger:hover { background: #fff0f0; }
 
 #spreadsheet-container { position: relative; width: 100%; }
 #spreadsheet { overflow: auto; }
@@ -313,12 +324,14 @@ a { text-decoration: none; color: inherit; }
   border-radius: var(--radius); height: 28px;
 }
 .formula-cell-ref {
-  min-width: 60px; max-width: 80px; padding: 0 8px;
+  width: 72px; min-width: 60px; max-width: 90px; padding: 0 6px;
   font-size: 12px; font-weight: 600; color: var(--text);
-  border-right: 1px solid var(--border);
-  text-align: center; line-height: 26px;
-  user-select: none; white-space: nowrap; overflow: hidden;
+  border: none; border-right: 1px solid var(--border);
+  text-align: center; line-height: 26px; height: 100%;
+  white-space: nowrap; overflow: hidden; background: transparent;
+  outline: none; font-family: inherit;
 }
+.formula-cell-ref:focus { background: #fffff0; }
 .formula-fx {
   padding: 0 6px; font-size: 12px; font-style: italic;
   color: var(--text-muted); border-right: 1px solid var(--border);
@@ -356,8 +369,98 @@ a { text-decoration: none; color: inherit; }
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); min-height: 24px;
   font-size: 12px; color: var(--text-muted);
-  white-space: nowrap; overflow-x: auto;
+  white-space: nowrap; overflow-x: auto; gap: 0;
 }
+.stat-item { padding: 0 8px; }
+.stat-item b { color: var(--text); font-weight: 600; }
+.stat-sep { color: var(--border); padding: 0 2px; }
+
+/* ---- Format Painter cursor ---- */
+body.painter-cursor, body.painter-cursor * { cursor: cell !important; }
+body.painter-cursor .jexcel td { cursor: cell !important; }
+
+/* ---- Hyperlink cells ---- */
+td.cell-hyperlink { color: #0563C1 !important; text-decoration: underline !important; cursor: pointer; }
+
+/* ---- Freeze rows (sticky) ---- */
+tr.freeze-row { background: #fff; }
+tr.freeze-row-last td { border-bottom: 2px solid #4472C4 !important; }
+tr.freeze-row td:first-child { position: sticky; left: 0; z-index: 4; }
+
+/* ---- AutoFilter ---- */
+.af-btn {
+  position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+  font-size: 8px; color: #666; cursor: pointer; padding: 1px 3px;
+  line-height: 1; border-radius: 2px;
+}
+.af-btn:hover { background: #ddd; }
+.af-btn.af-btn-active { color: var(--primary); font-weight: bold; }
+.af-dropdown {
+  background: #fff; border: 1px solid #ccc; border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.15); padding: 8px;
+  z-index: 9999; min-width: 200px; max-width: 300px; font-size: 13px;
+}
+.af-search {
+  width: 100%; box-sizing: border-box; padding: 4px 8px;
+  border: 1px solid #ccc; border-radius: 3px; margin-bottom: 6px; font-size: 12px;
+}
+.af-list { max-height: 200px; overflow-y: auto; margin-bottom: 8px; }
+.af-item { display: block; padding: 2px 0; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.af-item:hover { background: #f0f4ff; }
+.af-item input[type="checkbox"] { margin-right: 4px; }
+.af-item-all { font-weight: bold; border-bottom: 1px solid #eee; padding-bottom: 4px; margin-bottom: 4px; }
+.af-btn-bar { display: flex; gap: 4px; justify-content: flex-end; }
+.af-btn-bar button {
+  padding: 4px 10px; border: 1px solid #ccc; border-radius: 3px;
+  cursor: pointer; font-size: 12px; background: #f9f9f9;
+}
+.af-btn-bar button:hover { background: #eee; }
+.af-ok { background: var(--primary) !important; color: #fff !important; border-color: var(--primary) !important; }
+.af-ok:hover { background: var(--primary-hover) !important; }
+.af-clear { color: #c00; }
+.filter-hidden { display: none !important; }
+
+/* ---- Outline/Grouping ---- */
+.outline-btn {
+  position: absolute; right: 1px; top: 1px;
+  font-size: 9px; line-height: 1; cursor: pointer;
+  background: #e8e8e8; border: 1px solid #bbb; border-radius: 2px;
+  width: 12px; height: 12px; text-align: center;
+  color: #333; z-index: 2;
+}
+.outline-btn:hover { background: #d0d0d0; }
+
+/* ---- Conditional Format Icons ---- */
+.cf-icon { font-size: 10px; vertical-align: middle; margin-right: 2px; }
+
+/* ---- Paste Special Dialog ---- */
+.paste-special-dialog {
+  background: #fff; border: 1px solid #ccc; border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.2); padding: 16px;
+  z-index: 10000; min-width: 240px; font-size: 13px;
+}
+.ps-title { font-weight: bold; font-size: 14px; margin-bottom: 12px; }
+.ps-opt { display: block; padding: 4px 0; cursor: pointer; }
+.ps-opt input { margin-right: 6px; }
+.ps-btn-bar { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.ps-btn-bar button {
+  padding: 5px 14px; border: 1px solid #ccc; border-radius: 4px;
+  cursor: pointer; font-size: 13px; background: #f9f9f9;
+}
+.ps-btn-bar button:hover { background: #eee; }
+.ps-ok { background: var(--primary) !important; color: #fff !important; border-color: var(--primary) !important; }
+.ps-ok:hover { background: var(--primary-hover) !important; }
+
+/* ---- Data Validation Dropdown ---- */
+.dv-dropdown {
+  background: #fff; border: 1px solid #ccc; border-radius: 3px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.15); z-index: 9999;
+  max-height: 200px; overflow-y: auto; font-size: 13px;
+}
+.dv-option {
+  padding: 4px 10px; cursor: pointer; white-space: nowrap;
+}
+.dv-option:hover { background: #e8f0fe; }
 
 /* ---- Autofill handle ---- */
 .autofill-handle {

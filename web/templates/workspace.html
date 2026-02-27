@@ -35,6 +35,9 @@
 
 <!-- 포맷 툴바 -->
 <div class="format-toolbar" id="format-toolbar" style="display:none">
+  <!-- 서식 복사 -->
+  <button class="fmt-btn" id="fmt-painter" title="서식 복사 (클릭: 1회, 더블클릭: 연속)" onclick="fmtPainter()" ondblclick="fmtPainterDbl()">&#x1f58c;</button>
+  <div class="fmt-sep"></div>
   <!-- 글꼴 크기 -->
   <select class="fmt-select" id="fmt-font-size" title="글꼴 크기" onchange="fmtFontSize(this.value)">
     <option value="8">8</option><option value="9">9</option><option value="10">10</option>
@@ -115,7 +118,7 @@
 
 <!-- 수식 입력줄 -->
 <div class="formula-bar" id="formula-bar" style="display:none">
-  <div class="formula-cell-ref" id="formula-cell-ref">A1</div>
+  <input type="text" class="formula-cell-ref" id="formula-cell-ref" value="A1" title="셀 주소 입력 (예: A1, A1:D10)">
   <div class="formula-fx">fx</div>
   <input type="text" class="formula-input" id="formula-input" placeholder="셀 값 또는 수식 입력">
 </div>

@@ -170,6 +170,8 @@ function findPrev() { SpreadsheetCore.findPrev(ctx); }
 function replaceCurrent() { SpreadsheetCore.replaceCurrent(ctx); }
 function replaceAll() { SpreadsheetCore.replaceAll(ctx); }
 function printSheet() { SpreadsheetCore.printSpreadsheet(); }
+function fmtPainter() { SpreadsheetCore.fmtPainterClick(ctx); }
+function fmtPainterDbl() { SpreadsheetCore.fmtPainterDblClick(ctx); }
 
 // ── 초기화 ────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -180,6 +182,7 @@ document.addEventListener('DOMContentLoaded', () => {
   SpreadsheetCore.initColorSwatches(ctx);
   SpreadsheetCore.registerShortcuts(ctx);
   initFormulaBar();
+  SpreadsheetCore.initNameBox(ctx);
   renderTabs();
   if (sheets.length > 0) loadSheet(0);
   document.addEventListener('click', SpreadsheetCore.closeAllDropdowns);
@@ -370,6 +373,12 @@ async function loadSheet(index) {
     setTimeout(() => SpreadsheetCore.applyConditionalFormats(ctx, data.conditional_formats), 100);
   }
 
+  // 행 고정 적용
+  SpreadsheetCore.clearFreezeRows();
+  if (data.freeze_rows > 0) {
+    setTimeout(() => SpreadsheetCore.applyFreezeRows(ctx, data.freeze_rows), 150);
+  }
+
   // 자동 채우기 핸들 초기화
   SpreadsheetCore.initAutofill(ctx);
 }
@@ -390,6 +399,9 @@ function mapType(t) {
 // ── 헤더 클릭 ─────────────────────────────────────────────────
 function handleSelection(el, x1, y1, x2, y2) {
   selX1 = x1; selY1 = y1; selX2 = x2; selY2 = y2;
+  if (SpreadsheetCore.isPainterActive()) {
+    SpreadsheetCore.applyPainterToSelection(ctx);
+  }
   SpreadsheetCore.updateToolbarState(ctx);
   if (ctx._positionAutofillHandle) ctx._positionAutofillHandle();
 }

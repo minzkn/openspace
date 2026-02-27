@@ -16,7 +16,7 @@ from ..auth import get_current_user
 from ..rbac import require_user, is_admin_or_above
 from ..models import User
 from ..ws_hub import hub
-from .templates import _style_to_css, _range_to_jss, _freeze_to_cols, _pt_to_px
+from .templates import _style_to_css, _range_to_jss, _freeze_to_cols, _freeze_to_rows, _pt_to_px
 from openpyxl.utils import get_column_letter
 
 router = APIRouter(prefix="/api/workspaces", tags=["cells"])
@@ -31,6 +31,7 @@ class PatchItem(BaseModel):
     value: Optional[str] = None
     style: Optional[str] = None  # style JSON 문자열 (선택)
     comment: Optional[str] = None  # 셀 메모 (선택)
+    hyperlink: Optional[str] = None  # URL 하이퍼링크 (선택)
 
 
 class PatchRequest(BaseModel):
@@ -68,6 +69,9 @@ async def _apply_patches(
             if c.is_readonly:
                 readonly_cols.add(c.col_index)
 
+    # 시트 보호 상태 확인
+    sheet_protected = bool(ws_sheet.sheet_protected)
+
     applied = []
     for p in patches:
         if not (0 <= p.row < MAX_ROWS):
@@ -77,6 +81,20 @@ async def _apply_patches(
         # readonly 컬럼: 일반 사용자 거부
         if p.col in readonly_cols and not is_admin_or_above(current_user):
             continue
+        # 시트 보호 + 셀 잠금: 일반 사용자 거부
+        if sheet_protected and not is_admin_or_above(current_user):
+            cell_check = db.query(WorkspaceCell).filter(
+                WorkspaceCell.sheet_id == sheet_id,
+                WorkspaceCell.row_index == p.row,
+                WorkspaceCell.col_index == p.col,
+            ).first()
+            if cell_check and cell_check.style:
+                try:
+                    s = json.loads(cell_check.style)
+                    if s.get("locked"):
+                        continue
+                except Exception:
+                    pass
 
         existing = db.query(WorkspaceCell).filter(
             WorkspaceCell.sheet_id == sheet_id,
@@ -85,6 +103,14 @@ async def _apply_patches(
         ).first()
         old_value = existing.value if existing else None
 
+        # 하이퍼링크 보안 검증
+        safe_hyperlink = None
+        if p.hyperlink is not None:
+            hl = p.hyperlink.strip()
+            if hl and not any(hl.lower().startswith(proto) for proto in ('http://', 'https://', 'mailto:', '#')):
+                hl = None  # 허용되지 않은 프로토콜 차단
+            safe_hyperlink = hl if hl else None
+
         if existing:
             if p.value is not None:
                 existing.value = p.value
@@ -92,6 +118,8 @@ async def _apply_patches(
                 existing.style = p.style
             if p.comment is not None:
                 existing.comment = p.comment if p.comment else None
+            if p.hyperlink is not None:
+                existing.hyperlink = safe_hyperlink
             existing.updated_by = current_user.id
             existing.updated_at = _now()
         else:
@@ -103,6 +131,7 @@ async def _apply_patches(
                 value=p.value,
                 style=p.style,
                 comment=p.comment if p.comment else None,
+                hyperlink=safe_hyperlink,
                 updated_by=current_user.id,
                 updated_at=_now(),
             ))
@@ -119,7 +148,7 @@ async def _apply_patches(
                 old_value=old_value,
                 new_value=p.value,
             ))
-        applied.append({"row": p.row, "col": p.col, "value": p.value, "style": p.style, "comment": p.comment})
+        applied.append({"row": p.row, "col": p.col, "value": p.value, "style": p.style, "comment": p.comment, "hyperlink": p.hyperlink})
 
     db.commit()
     return applied
@@ -163,11 +192,12 @@ async def get_snapshot(
     max_row = max((c.row_index for c in cells), default=-1) + 1
     num_rows = max(max_row, 100)
 
-    # 2D 배열 + 스타일 맵 + 메모 맵 + 숫자 서식 맵
+    # 2D 배열 + 스타일 맵 + 메모 맵 + 숫자 서식 맵 + 하이퍼링크 맵
     grid = [[""] * num_cols for _ in range(num_rows)]
     styles: dict = {}
     comments: dict = {}
     num_formats: dict = {}
+    hyperlinks: dict = {}
     for c in cells:
         if c.row_index < num_rows and c.col_index < num_cols:
             grid[c.row_index][c.col_index] = c.value or ""
@@ -184,6 +214,9 @@ async def get_snapshot(
             if c.comment:
                 cell_name = f"{get_column_letter(c.col_index + 1)}{c.row_index + 1}"
                 comments[cell_name] = c.comment
+            if c.hyperlink:
+                cell_name = f"{get_column_letter(c.col_index + 1)}{c.row_index + 1}"
+                hyperlinks[cell_name] = c.hyperlink
 
     # 병합 셀: xlsx range strings → jspreadsheet format
     merges: dict = {}
@@ -216,12 +249,35 @@ async def get_snapshot(
 
     # 틀 고정
     freeze_columns = _freeze_to_cols(ws_sheet.freeze_panes)
+    freeze_rows = _freeze_to_rows(ws_sheet.freeze_panes)
 
     # 조건부 서식
     conditional_formats = []
     if ws_sheet.conditional_formats:
         try:
             conditional_formats = json.loads(ws_sheet.conditional_formats)
+        except Exception:
+            pass
+
+    # 데이터 유효성 검사
+    data_validations = []
+    if ws_sheet.data_validations:
+        try:
+            data_validations = json.loads(ws_sheet.data_validations)
+        except Exception:
+            pass
+
+    # 숨겨진 행/열
+    hidden_rows_list = []
+    if ws_sheet.hidden_rows:
+        try:
+            hidden_rows_list = json.loads(ws_sheet.hidden_rows)
+        except Exception:
+            pass
+    hidden_cols_list = []
+    if ws_sheet.hidden_cols:
+        try:
+            hidden_cols_list = json.loads(ws_sheet.hidden_cols)
         except Exception:
             pass
 
@@ -234,10 +290,19 @@ async def get_snapshot(
             "row_heights": row_heights_px,
             "col_widths": col_widths_px,
             "freeze_columns": freeze_columns,
+            "freeze_rows": freeze_rows,
             "styles": styles,
             "comments": comments,
             "num_formats": num_formats,
             "conditional_formats": conditional_formats,
+            "hyperlinks": hyperlinks,
+            "hidden_rows": hidden_rows_list,
+            "hidden_cols": hidden_cols_list,
+            "data_validations": data_validations,
+            "sheet_protected": bool(ws_sheet.sheet_protected),
+            "print_settings": json.loads(ws_sheet.print_settings) if ws_sheet.print_settings else None,
+            "outline_rows": json.loads(ws_sheet.outline_rows) if ws_sheet.outline_rows else {},
+            "outline_cols": json.loads(ws_sheet.outline_cols) if ws_sheet.outline_cols else {},
         }
     }
 
@@ -661,3 +726,95 @@ def _shift_merges(merges: list[str], at_row: int, shift: int) -> list[str]:
         except Exception:
             updated.append(rng)
     return updated
+
+
+class SortRequest(BaseModel):
+    col_index: int
+    ascending: bool = True
+
+
+@router.post("/{workspace_id}/sheets/{sheet_id}/sort")
+async def sort_sheet(
+    workspace_id: str,
+    sheet_id: str,
+    body: SortRequest,
+    request: Request,
+    current_user: User = Depends(require_user),
+    db: DBSession = Depends(get_db),
+):
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if ws.status == "CLOSED" and not is_admin_or_above(current_user):
+        raise HTTPException(status_code=403, detail="Workspace is closed")
+
+    ws_sheet = db.query(WorkspaceSheet).filter(
+        WorkspaceSheet.id == sheet_id,
+        WorkspaceSheet.workspace_id == workspace_id,
+    ).first()
+    if not ws_sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+
+    # 병합 셀 감지 - 행 간 병합이 있으면 정렬 거부
+    if ws_sheet.merges:
+        try:
+            from openpyxl.utils import range_boundaries
+            for rng in json.loads(ws_sheet.merges):
+                _, min_row, _, max_row = range_boundaries(rng)
+                if max_row > min_row:
+                    raise HTTPException(status_code=400, detail="행 간 병합 셀이 있어 정렬할 수 없습니다")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+    cells = db.query(WorkspaceCell).filter(WorkspaceCell.sheet_id == sheet_id).all()
+    if not cells:
+        return {"message": "no data to sort"}
+
+    max_row = max(c.row_index for c in cells)
+    row_values = {}
+    for c in cells:
+        if c.col_index == body.col_index:
+            row_values[c.row_index] = c.value or ""
+
+    row_indices = list(range(max_row + 1))
+
+    def sort_key(ri):
+        val = row_values.get(ri, "")
+        if not val:
+            return (1, "")
+        try:
+            return (0, float(val))
+        except (ValueError, TypeError):
+            return (0, val.lower())
+
+    row_indices.sort(key=sort_key, reverse=not body.ascending)
+    old_to_new = {old_ri: new_ri for new_ri, old_ri in enumerate(row_indices)}
+
+    OFFSET = 100000
+    for c in cells:
+        c.row_index = old_to_new.get(c.row_index, c.row_index) + OFFSET
+    db.flush()
+    for c in cells:
+        c.row_index -= OFFSET
+    db.flush()
+
+    if ws_sheet.row_heights:
+        try:
+            old_heights = json.loads(ws_sheet.row_heights)
+            new_heights = {}
+            for old_str, val in old_heights.items():
+                new_ri = old_to_new.get(int(old_str), int(old_str))
+                new_heights[str(new_ri)] = val
+            ws_sheet.row_heights = json.dumps(new_heights)
+        except Exception:
+            pass
+
+    db.commit()
+
+    import asyncio
+    asyncio.create_task(hub.broadcast(workspace_id, {
+        "type": "reload", "updated_by": current_user.username,
+    }, exclude=None))
+    return {"message": "sorted"}

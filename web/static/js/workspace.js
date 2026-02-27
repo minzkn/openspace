@@ -94,6 +94,12 @@ const ctx = {
     const patches = changes.map(c => ({ row: c.row, col: c.col, value: '', style: null }));
     if (patches.length > 0) sendBatchPatch(sheet.id, patches);
   },
+  onPasteSpecial: (changes) => {
+    const sheet = sheets[currentSheetIndex];
+    if (!sheet) return;
+    const patches = changes.map(c => ({ row: c.row, col: c.col, value: c.newVal, style: null }));
+    if (patches.length > 0) sendBatchPatch(sheet.id, patches);
+  },
   onAutofill: (changes) => {
     const sheet = sheets[currentSheetIndex];
     if (!sheet) return;
@@ -124,7 +130,15 @@ const ctx = {
   onColumnDelete: (colIndex) => { deleteColApi(colIndex); },
   onColumnsDelete: (colIndices) => { deleteColsApi(colIndices); },
   onCommentChange: (row, col, comment) => { saveComment(row, col, comment); },
+  onHyperlinkChange: (row, col, url) => { saveHyperlink(row, col, url); },
+  onHideRows: IS_ADMIN ? (rows) => { hideRows(rows); } : undefined,
+  onUnhideRows: IS_ADMIN ? () => { unhideRows(); } : undefined,
+  onHideCols: IS_ADMIN ? (cols) => { hideCols(cols); } : undefined,
+  onUnhideCols: IS_ADMIN ? () => { unhideCols(); } : undefined,
   onColumnProps: IS_ADMIN ? (colIndex) => { showColumnPropsModal(colIndex); } : undefined,
+  onFreezeSetup: IS_ADMIN ? () => { showFreezeDialog(); } : undefined,
+  onSheetProtection: IS_ADMIN ? () => { toggleSheetProtection(); } : undefined,
+  onPrintSetup: IS_ADMIN ? () => { showPrintSettingsDialog(); } : undefined,
   undoManager: new SpreadsheetCore.UndoManager(),
 };
 
@@ -157,6 +171,8 @@ function findPrev() { SpreadsheetCore.findPrev(ctx); }
 function replaceCurrent() { SpreadsheetCore.replaceCurrent(ctx); }
 function replaceAll() { SpreadsheetCore.replaceAll(ctx); }
 function printSheet() { SpreadsheetCore.printSpreadsheet(); }
+function fmtPainter() { SpreadsheetCore.fmtPainterClick(ctx); }
+function fmtPainterDbl() { SpreadsheetCore.fmtPainterDblClick(ctx); }
 
 document.addEventListener('DOMContentLoaded', init);
 
@@ -169,6 +185,7 @@ function init() {
   SpreadsheetCore.initColorSwatches(ctx);
   SpreadsheetCore.registerShortcuts(ctx);
   initFormulaBar();
+  SpreadsheetCore.initNameBox(ctx);
   renderTabs();
   if (sheets.length > 0) loadSheet(0);
   connectWebSocket();
@@ -203,8 +220,10 @@ function renderTabs() {
     const delBtn = (IS_ADMIN && sheets.length > 1)
       ? `<span class="tab-del" onclick="deleteWsSheet(${i})" title="삭제">\u00d7</span>`
       : '';
-    return `<div class="sheet-tab ${isActive ? 'active' : ''}"
-        onclick="handleTabClick(event, ${i})" ${IS_ADMIN ? `ondblclick="handleTabDblClick(event, ${i})"` : ''}>
+    const drag = IS_ADMIN ? `draggable="true" data-tab-idx="${i}"` : '';
+    return `<div class="sheet-tab ${isActive ? 'active' : ''}" ${drag}
+        onclick="handleTabClick(event, ${i})" ${IS_ADMIN ? `ondblclick="handleTabDblClick(event, ${i})"` : ''}
+        ${IS_ADMIN ? `oncontextmenu="showTabContextMenu(event, ${i})"` : ''}>
       <span>${esc(s.sheet_name)}</span>${delBtn}
     </div>`;
   }).join('');
@@ -215,6 +234,62 @@ function renderTabs() {
     addBtn.title = '시트 추가';
     addBtn.onclick = addWsSheet;
     tabsEl.appendChild(addBtn);
+    // Drag-and-drop reorder
+    initTabDragDrop(tabsEl);
+  }
+}
+
+function initTabDragDrop(tabsEl) {
+  let dragIdx = -1;
+  tabsEl.querySelectorAll('.sheet-tab[draggable]').forEach(tab => {
+    tab.addEventListener('dragstart', function(e) {
+      dragIdx = parseInt(this.dataset.tabIdx);
+      this.classList.add('tab-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    tab.addEventListener('dragend', function() {
+      this.classList.remove('tab-dragging');
+      tabsEl.querySelectorAll('.sheet-tab').forEach(t => t.classList.remove('tab-drag-over'));
+    });
+    tab.addEventListener('dragover', function(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      this.classList.add('tab-drag-over');
+    });
+    tab.addEventListener('dragleave', function() {
+      this.classList.remove('tab-drag-over');
+    });
+    tab.addEventListener('drop', function(e) {
+      e.preventDefault();
+      this.classList.remove('tab-drag-over');
+      const dropIdx = parseInt(this.dataset.tabIdx);
+      if (dragIdx < 0 || dragIdx === dropIdx) return;
+      // Reorder sheets array
+      const [moved] = sheets.splice(dragIdx, 1);
+      sheets.splice(dropIdx, 0, moved);
+      // Adjust current sheet index
+      if (currentSheetIndex === dragIdx) {
+        currentSheetIndex = dropIdx;
+      } else if (dragIdx < currentSheetIndex && dropIdx >= currentSheetIndex) {
+        currentSheetIndex--;
+      } else if (dragIdx > currentSheetIndex && dropIdx <= currentSheetIndex) {
+        currentSheetIndex++;
+      }
+      renderTabs();
+      saveSheetOrder();
+    });
+  });
+}
+
+async function saveSheetOrder() {
+  const order = sheets.map(s => s.id);
+  const res = await apiFetch(
+    `/api/admin/workspaces/${workspaceData.id}/sheets-order`,
+    { method: 'PATCH', body: JSON.stringify({ order }) }
+  );
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast(e.detail || '순서 저장 실패', 'error');
   }
 }
 
@@ -228,6 +303,67 @@ function handleTabDblClick(e, index) {
   if (tabClickTimer) { clearTimeout(tabClickTimer); tabClickTimer = null; }
   if (index !== currentSheetIndex) switchSheet(index);
   renameWsSheet(index);
+}
+
+function showTabContextMenu(e, index) {
+  e.preventDefault();
+  // 기존 컨텍스트 메뉴 제거
+  var old = document.getElementById('tab-context-menu');
+  if (old) old.remove();
+
+  var menu = document.createElement('div');
+  menu.id = 'tab-context-menu';
+  menu.className = 'tab-context-menu';
+  menu.innerHTML =
+    '<div class="tcm-item" data-action="copy">시트 복사</div>' +
+    '<div class="tcm-item" data-action="rename">이름 변경</div>' +
+    (sheets.length > 1 ? '<div class="tcm-item tcm-danger" data-action="delete">시트 삭제</div>' : '');
+
+  menu.style.position = 'fixed';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  document.body.appendChild(menu);
+
+  menu.addEventListener('click', function(ev) {
+    var action = ev.target.dataset.action;
+    if (action === 'copy') copySheet(index);
+    else if (action === 'rename') renameWsSheet(index);
+    else if (action === 'delete') deleteWsSheet(index);
+    menu.remove();
+  });
+
+  setTimeout(function() {
+    document.addEventListener('mousedown', function handler(ev) {
+      if (!menu.contains(ev.target)) {
+        menu.remove();
+        document.removeEventListener('mousedown', handler);
+      }
+    });
+  }, 0);
+}
+
+async function copySheet(index) {
+  var sheet = sheets[index];
+  if (!sheet) return;
+  var res = await apiFetch(
+    `/api/admin/workspaces/${workspaceData.id}/sheets/${sheet.id}/copy`,
+    { method: 'POST' }
+  );
+  if (res.ok) {
+    var data = await res.json();
+    sheets.push({
+      id: data.id,
+      sheet_name: data.name,
+      sheet_index: data.sheet_index,
+      columns: sheet.columns,
+    });
+    renderTabs();
+    switchSheet(sheets.length - 1);
+    showToast('시트가 복사되었습니다.');
+  } else {
+    var e = await res.json().catch(() => ({}));
+    showToast(e.detail || '시트 복사 실패', 'error');
+  }
 }
 
 function switchSheet(index) {
@@ -386,8 +522,51 @@ async function loadSheet(index) {
     setTimeout(() => SpreadsheetCore.applyConditionalFormats(ctx, data.conditional_formats), 100);
   }
 
+  // 하이퍼링크 표시
+  SpreadsheetCore.setHyperlinksMap(data.hyperlinks || {});
+  setTimeout(() => SpreadsheetCore.applyHyperlinkStyles(ctx), 100);
+
+  // 데이터 유효성 검사 로드
+  SpreadsheetCore.setDataValidations(data.data_validations || []);
+
+  // 시트 보호 상태 저장
+  var curSheet = sheets[currentSheetIndex];
+  if (curSheet) curSheet.sheet_protected = data.sheet_protected || false;
+
+  // 인쇄 설정 로드
+  _printSettings = data.print_settings || null;
+  applyPrintCSS(_printSettings);
+
+  // 행/열 그룹 적용
+  SpreadsheetCore.clearOutlines();
+  if ((data.outline_rows && Object.keys(data.outline_rows).length > 0) ||
+      (data.outline_cols && Object.keys(data.outline_cols).length > 0)) {
+    setTimeout(() => SpreadsheetCore.applyOutlines(ctx, data.outline_rows || {}, data.outline_cols || {}), 200);
+  }
+
+  // 숨겨진 행/열 적용
+  _hiddenRows = data.hidden_rows || [];
+  _hiddenCols = data.hidden_cols || [];
+  if (_hiddenRows.length > 0) {
+    setTimeout(() => SpreadsheetCore.applyHiddenRows(ctx, _hiddenRows), 100);
+  }
+  if (_hiddenCols.length > 0) {
+    setTimeout(() => SpreadsheetCore.applyHiddenCols(ctx, _hiddenCols), 100);
+  }
+
+  // 행 고정 적용
+  SpreadsheetCore.clearFreezeRows();
+  if (data.freeze_rows > 0) {
+    setTimeout(() => SpreadsheetCore.applyFreezeRows(ctx, data.freeze_rows), 150);
+  }
+
   // 자동 채우기 핸들 초기화
   SpreadsheetCore.initAutofill(ctx);
+
+  // 하이퍼링크 클릭 핸들러
+  container.addEventListener('click', function(e) {
+    SpreadsheetCore.handleHyperlinkClick(ctx, e);
+  });
 }
 
 function buildColumnDefs(columns, isEditable) {
@@ -412,6 +591,13 @@ function handleBeforeChange(instance, cell, x, y, value) {
   if (!sheet) return value;
   const col = sheet.columns[x];
   if (col && col.is_readonly && !IS_ADMIN) return false;
+  // 데이터 유효성 검증
+  var cellName = SpreadsheetCore.colIndexToLetter(parseInt(x)) + (parseInt(y) + 1);
+  var dvErr = SpreadsheetCore.validateCellValue(cellName, value);
+  if (dvErr) {
+    showToast(dvErr, 'error');
+    return false;
+  }
   // Capture old value for undo
   try {
     const oldVal = instance.getValueFromCoords(parseInt(x), parseInt(y)) || '';
@@ -483,8 +669,17 @@ function handlePaste(instance, data) {
 
 function handleSelection(el, x1, y1, x2, y2) {
   selX1 = x1; selY1 = y1; selX2 = x2; selY2 = y2;
+  // Format Painter: 선택 시 자동 적용
+  if (SpreadsheetCore.isPainterActive()) {
+    SpreadsheetCore.applyPainterToSelection(ctx);
+  }
   SpreadsheetCore.updateToolbarState(ctx);
   if (ctx._positionAutofillHandle) ctx._positionAutofillHandle();
+  // 데이터 유효성 list 드롭다운 (단일 셀 선택 시)
+  SpreadsheetCore.hideValidationDropdown();
+  if (x1 === x2 && y1 === y2) {
+    SpreadsheetCore.showValidationDropdown(ctx, parseInt(x1), parseInt(y1));
+  }
 }
 
 // ── 패치 큐 ───────────────────────────────────────────────────
@@ -648,9 +843,28 @@ function handleWsMessage(msg) {
     }
     return;
   }
+  if (msg.type === 'sheets_reordered') {
+    const orderMap = {};
+    msg.order.forEach((id, idx) => { orderMap[id] = idx; });
+    const curSheetId = sheets[currentSheetIndex] ? sheets[currentSheetIndex].id : null;
+    sheets.sort((a, b) => (orderMap[a.id] ?? 999) - (orderMap[b.id] ?? 999));
+    if (curSheetId) {
+      currentSheetIndex = sheets.findIndex(s => s.id === curSheetId);
+      if (currentSheetIndex < 0) currentSheetIndex = 0;
+    }
+    renderTabs();
+    return;
+  }
   if (msg.type === 'sheet_renamed') {
     const s = sheets.find(s => s.id === msg.sheet_id);
     if (s) { s.sheet_name = msg.sheet_name; renderTabs(); }
+    return;
+  }
+  if (msg.type === 'sheet_added') {
+    // 다른 사용자가 시트를 추가한 경우 페이지 새로고침
+    if (!sheets.find(s => s.id === msg.sheet_id)) {
+      location.reload();
+    }
     return;
   }
   if (msg.type === 'error') showToast(msg.message || '오류 발생', 'error');
@@ -1155,6 +1369,202 @@ async function deleteColumnFromModal() {
   } else {
     const e = await res.json().catch(() => ({}));
     showToast(e.detail || '삭제 실패', 'error');
+  }
+}
+
+// ── 하이퍼링크 저장 ─────────────────────────────────────────
+async function saveHyperlink(row, col, url) {
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  const res = await apiFetch(
+    `/api/workspaces/${workspaceData.id}/sheets/${sheet.id}/patches`,
+    { method: 'POST', body: JSON.stringify({ patches: [{ row, col, hyperlink: url || '' }] }) }
+  );
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast(e.detail || '하이퍼링크 저장 실패', 'error');
+  }
+}
+
+// ── 행/열 숨기기 관리 ───────────────────────────────────────
+let _hiddenRows = [];
+let _hiddenCols = [];
+
+async function hideRows(rows) {
+  rows.forEach(r => { if (!_hiddenRows.includes(r)) _hiddenRows.push(r); });
+  _hiddenRows.sort((a, b) => a - b);
+  SpreadsheetCore.applyHiddenRows(ctx, _hiddenRows);
+  await saveHidden();
+}
+
+async function unhideRows() {
+  _hiddenRows = [];
+  SpreadsheetCore.applyHiddenRows(ctx, []);
+  await saveHidden();
+}
+
+async function hideCols(cols) {
+  cols.forEach(c => { if (!_hiddenCols.includes(c)) _hiddenCols.push(c); });
+  _hiddenCols.sort((a, b) => a - b);
+  SpreadsheetCore.applyHiddenCols(ctx, _hiddenCols);
+  await saveHidden();
+}
+
+async function unhideCols() {
+  _hiddenCols = [];
+  SpreadsheetCore.applyHiddenCols(ctx, []);
+  await saveHidden();
+}
+
+async function saveHidden() {
+  const sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  const res = await apiFetch(
+    `/api/admin/workspaces/${workspaceData.id}/sheets/${sheet.id}/hidden`,
+    { method: 'PATCH', body: JSON.stringify({ hidden_rows: _hiddenRows, hidden_cols: _hiddenCols }) }
+  );
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    showToast(e.detail || '숨기기 저장 실패', 'error');
+  }
+}
+
+// ── 틀 고정 설정 다이얼로그 ────────────────────────────────
+function showFreezeDialog() {
+  var sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  // 현재 freeze_panes에서 행/열 추출
+  var fp = sheet.freeze_panes || '';
+  var curCols = 0, curRows = 0;
+  if (fp) {
+    var m = fp.match(/^([A-Z]+)(\d+)$/i);
+    if (m) {
+      curCols = SpreadsheetCore.letterToColIndex(m[1]);
+      curRows = Math.max(0, parseInt(m[2]) - 1);
+    }
+  }
+  var input = prompt(
+    '틀 고정 설정\n고정할 행 수, 열 수를 쉼표로 입력하세요.\n예: 2,1 → 2행 고정 + 1열 고정\n해제하려면 0,0 또는 빈 값을 입력하세요.',
+    curRows + ',' + curCols
+  );
+  if (input === null) return;
+  input = input.trim();
+  var freezeRows = 0, freezeCols = 0;
+  if (input) {
+    var parts = input.split(',');
+    freezeRows = parseInt(parts[0]) || 0;
+    freezeCols = parts.length > 1 ? (parseInt(parts[1]) || 0) : 0;
+  }
+  var freezePanes = null;
+  if (freezeRows > 0 || freezeCols > 0) {
+    freezePanes = SpreadsheetCore.colIndexToLetter(freezeCols) + (freezeRows + 1);
+  }
+  saveFreeze(freezePanes);
+}
+
+async function saveFreeze(freezePanes) {
+  var sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  var res = await apiFetch(
+    `/api/admin/workspaces/${workspaceData.id}/sheets/${sheet.id}/freeze`,
+    { method: 'PATCH', body: JSON.stringify({ freeze_panes: freezePanes }) }
+  );
+  if (res.ok) {
+    sheet.freeze_panes = freezePanes;
+    showToast('틀 고정 설정이 저장되었습니다.');
+    // 시트 다시 로드
+    loadSheet(currentSheetIndex);
+  } else {
+    var e = await res.json().catch(() => ({}));
+    showToast(e.detail || '틀 고정 저장 실패', 'error');
+  }
+}
+
+// ── 인쇄 설정 ────────────────────────────────────────────────
+var _printSettings = null;
+
+function showPrintSettingsDialog() {
+  var sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  var ps = _printSettings || { paperSize: 'A4', orientation: 'portrait', scale: 100, margins: { top: 20, bottom: 20, left: 15, right: 15 } };
+
+  var old = document.getElementById('print-settings-dialog');
+  if (old) old.remove();
+
+  var dialog = document.createElement('div');
+  dialog.id = 'print-settings-dialog';
+  dialog.className = 'paste-special-dialog';
+  dialog.innerHTML =
+    '<div class="ps-title">인쇄 설정</div>' +
+    '<label class="ps-opt">용지 크기: <select id="ps-paper"><option value="A4"' + (ps.paperSize==='A4'?' selected':'') + '>A4</option><option value="A3"' + (ps.paperSize==='A3'?' selected':'') + '>A3</option><option value="Letter"' + (ps.paperSize==='Letter'?' selected':'') + '>Letter</option></select></label>' +
+    '<label class="ps-opt">방향: <select id="ps-orient"><option value="portrait"' + (ps.orientation==='portrait'?' selected':'') + '>세로</option><option value="landscape"' + (ps.orientation==='landscape'?' selected':'') + '>가로</option></select></label>' +
+    '<label class="ps-opt">배율(%): <input type="number" id="ps-scale" value="' + (ps.scale||100) + '" min="10" max="400" style="width:60px"></label>' +
+    '<div class="ps-btn-bar"><button class="ps-ok">저장</button><button class="ps-cancel">취소</button></div>';
+
+  dialog.style.position = 'fixed';
+  dialog.style.left = '50%';
+  dialog.style.top = '50%';
+  dialog.style.transform = 'translate(-50%, -50%)';
+  document.body.appendChild(dialog);
+
+  dialog.querySelector('.ps-ok').addEventListener('click', async function() {
+    var settings = {
+      paperSize: document.getElementById('ps-paper').value,
+      orientation: document.getElementById('ps-orient').value,
+      scale: parseInt(document.getElementById('ps-scale').value) || 100,
+      margins: ps.margins,
+    };
+    var res = await apiFetch(
+      `/api/admin/workspaces/${workspaceData.id}/sheets/${sheet.id}/print-settings`,
+      { method: 'PATCH', body: JSON.stringify({ print_settings: settings }) }
+    );
+    if (res.ok) {
+      _printSettings = settings;
+      applyPrintCSS(settings);
+      showToast('인쇄 설정이 저장되었습니다.');
+    } else {
+      showToast('인쇄 설정 저장 실패', 'error');
+    }
+    dialog.remove();
+  });
+  dialog.querySelector('.ps-cancel').addEventListener('click', function() { dialog.remove(); });
+}
+
+function applyPrintCSS(settings) {
+  var existing = document.getElementById('print-page-style');
+  if (existing) existing.remove();
+  if (!settings) return;
+  var size = settings.paperSize || 'A4';
+  var orient = settings.orientation || 'portrait';
+  var scale = settings.scale || 100;
+  var m = settings.margins || {};
+  var css = '@page { size: ' + size + ' ' + orient + '; margin: ' +
+    (m.top||20) + 'mm ' + (m.right||15) + 'mm ' + (m.bottom||20) + 'mm ' + (m.left||15) + 'mm; }' +
+    ' @media print { body { transform: scale(' + (scale/100) + '); transform-origin: top left; } }';
+  var style = document.createElement('style');
+  style.id = 'print-page-style';
+  style.textContent = css;
+  document.head.appendChild(style);
+}
+
+// ── 시트 보호 토글 ──────────────────────────────────────────
+async function toggleSheetProtection() {
+  var sheet = sheets[currentSheetIndex];
+  if (!sheet) return;
+  var isProtected = sheet.sheet_protected || false;
+  var newVal = !isProtected;
+  var msg = newVal ? '시트를 보호하시겠습니까?\n잠긴(locked) 셀은 일반 사용자가 편집할 수 없게 됩니다.' : '시트 보호를 해제하시겠습니까?';
+  if (!confirm(msg)) return;
+  var res = await apiFetch(
+    `/api/admin/workspaces/${workspaceData.id}/sheets/${sheet.id}/protection`,
+    { method: 'PATCH', body: JSON.stringify({ protected: newVal }) }
+  );
+  if (res.ok) {
+    sheet.sheet_protected = newVal;
+    showToast(newVal ? '시트 보호가 활성화되었습니다.' : '시트 보호가 해제되었습니다.');
+  } else {
+    var e = await res.json().catch(() => ({}));
+    showToast(e.detail || '시트 보호 변경 실패', 'error');
   }
 }
 

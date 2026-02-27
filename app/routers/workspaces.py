@@ -24,7 +24,9 @@ from .templates import (
     _extract_cell_style, _apply_cell_style, _style_to_css,
     _range_to_jss, _freeze_to_cols, _pt_to_px,
     _get_theme_colors, _stringify_value, _parse_value_for_excel,
-    _sanitize_xlsx,
+    _sanitize_xlsx, _extract_conditional_formats, _apply_conditional_formats,
+    _extract_data_validations, _apply_data_validations,
+    _extract_outlines, _apply_outlines,
 )
 
 router = APIRouter(tags=["workspaces"])
@@ -41,6 +43,10 @@ class WSSheetCreate(BaseModel):
 
 class WSSheetUpdate(BaseModel):
     sheet_name: Optional[str] = None
+
+
+class SheetReorderRequest(BaseModel):
+    order: list[str]  # list of sheet_id in new order
 
 
 class WorkspaceUpdate(BaseModel):
@@ -363,6 +369,111 @@ async def update_ws_sheet_col_widths(
     return {"message": "col_widths saved"}
 
 
+class HiddenUpdate(BaseModel):
+    hidden_rows: Optional[list[int]] = None
+    hidden_cols: Optional[list[int]] = None
+
+
+@admin_router.patch("/{workspace_id}/sheets/{sheet_id}/hidden")
+async def update_ws_sheet_hidden(
+    workspace_id: str,
+    sheet_id: str,
+    body: HiddenUpdate,
+    request: Request,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    ws_sheet = db.query(WorkspaceSheet).filter(
+        WorkspaceSheet.id == sheet_id,
+        WorkspaceSheet.workspace_id == workspace_id,
+    ).first()
+    if not ws_sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    if body.hidden_rows is not None:
+        ws_sheet.hidden_rows = json.dumps(body.hidden_rows) if body.hidden_rows else None
+    if body.hidden_cols is not None:
+        ws_sheet.hidden_cols = json.dumps(body.hidden_cols) if body.hidden_cols else None
+    db.commit()
+    import asyncio
+    asyncio.create_task(hub.broadcast(workspace_id, {
+        "type": "sheet_config_updated",
+        "sheet_id": sheet_id,
+        "config_key": "hidden",
+        "updated_by": current_user.username,
+        "tab_id": request.headers.get("X-Tab-ID", ""),
+    }, exclude=None))
+    return {"message": "hidden saved"}
+
+
+class DataValidationsUpdate(BaseModel):
+    data_validations: list = []
+
+
+@admin_router.patch("/{workspace_id}/sheets/{sheet_id}/data-validations")
+async def update_ws_sheet_data_validations(
+    workspace_id: str,
+    sheet_id: str,
+    body: DataValidationsUpdate,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    ws_sheet = db.query(WorkspaceSheet).filter(
+        WorkspaceSheet.id == sheet_id,
+        WorkspaceSheet.workspace_id == workspace_id,
+    ).first()
+    if not ws_sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    ws_sheet.data_validations = json.dumps(body.data_validations) if body.data_validations else None
+    db.commit()
+    return {"message": "data validations saved"}
+
+
+class PrintSettingsUpdate(BaseModel):
+    print_settings: Optional[dict] = None
+
+
+@admin_router.patch("/{workspace_id}/sheets/{sheet_id}/print-settings")
+async def update_ws_sheet_print_settings(
+    workspace_id: str,
+    sheet_id: str,
+    body: PrintSettingsUpdate,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    ws_sheet = db.query(WorkspaceSheet).filter(
+        WorkspaceSheet.id == sheet_id,
+        WorkspaceSheet.workspace_id == workspace_id,
+    ).first()
+    if not ws_sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    ws_sheet.print_settings = json.dumps(body.print_settings) if body.print_settings else None
+    db.commit()
+    return {"message": "print settings saved"}
+
+
+class SheetProtectionUpdate(BaseModel):
+    protected: bool = False
+
+
+@admin_router.patch("/{workspace_id}/sheets/{sheet_id}/protection")
+async def update_ws_sheet_protection(
+    workspace_id: str,
+    sheet_id: str,
+    body: SheetProtectionUpdate,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    ws_sheet = db.query(WorkspaceSheet).filter(
+        WorkspaceSheet.id == sheet_id,
+        WorkspaceSheet.workspace_id == workspace_id,
+    ).first()
+    if not ws_sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    ws_sheet.sheet_protected = 1 if body.protected else 0
+    db.commit()
+    return {"message": "sheet protection updated", "protected": body.protected}
+
+
 class ColumnPropsUpdate(BaseModel):
     col_header: Optional[str] = None
     col_type: Optional[str] = None
@@ -644,6 +755,112 @@ async def update_workspace_sheet(
     return {"data": {"id": ws_sheet.id, "sheet_name": ws_sheet.sheet_name}, "message": "updated"}
 
 
+@admin_router.patch("/{workspace_id}/sheets-order")
+async def reorder_workspace_sheets(
+    workspace_id: str,
+    body: SheetReorderRequest,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    sheet_map = {s.id: s for s in ws.sheets}
+    if set(body.order) != set(sheet_map.keys()):
+        raise HTTPException(status_code=400, detail="Sheet IDs mismatch")
+    for idx, sid in enumerate(body.order):
+        sheet_map[sid].sheet_index = idx
+    ws.updated_at = _now()
+    db.commit()
+    import asyncio
+    asyncio.create_task(hub.broadcast(workspace_id, {
+        "type": "sheets_reordered", "order": body.order,
+    }))
+    return {"message": "ok"}
+
+
+@admin_router.post("/{workspace_id}/sheets/{sheet_id}/copy", status_code=201)
+async def copy_workspace_sheet(
+    workspace_id: str,
+    sheet_id: str,
+    current_user: User = Depends(require_admin),
+    db: DBSession = Depends(get_db),
+):
+    """시트 복사 (셀/스타일/병합/행높이/열너비/조건부서식 모두 복제)"""
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    src = db.query(WorkspaceSheet).filter(
+        WorkspaceSheet.id == sheet_id,
+        WorkspaceSheet.workspace_id == workspace_id,
+    ).first()
+    if not src:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+
+    # 새 이름 생성
+    existing_names = {s.name for s in ws.sheets}
+    base_name = src.name
+    copy_name = base_name + " (2)"
+    counter = 2
+    while copy_name in existing_names:
+        counter += 1
+        copy_name = f"{base_name} ({counter})"
+
+    new_sheet = WorkspaceSheet(
+        id=str(uuid.uuid4()),
+        workspace_id=workspace_id,
+        template_sheet_id=src.template_sheet_id,
+        name=copy_name,
+        sheet_index=len(ws.sheets),
+        merges=src.merges,
+        row_heights=src.row_heights,
+        col_widths=src.col_widths,
+        freeze_panes=src.freeze_panes,
+        conditional_formats=src.conditional_formats,
+        data_validations=src.data_validations,
+        hidden_rows=src.hidden_rows,
+        hidden_cols=src.hidden_cols,
+        sheet_protected=src.sheet_protected,
+        print_settings=src.print_settings,
+        outline_rows=src.outline_rows,
+        outline_cols=src.outline_cols,
+    )
+    db.add(new_sheet)
+    db.flush()
+
+    # 셀 복사
+    cells = db.query(WorkspaceCell).filter(WorkspaceCell.sheet_id == sheet_id).all()
+    for cell in cells:
+        new_cell = WorkspaceCell(
+            id=str(uuid.uuid4()),
+            sheet_id=new_sheet.id,
+            row_index=cell.row_index,
+            col_index=cell.col_index,
+            value=cell.value,
+            style=cell.style,
+            comment=cell.comment,
+            hyperlink=cell.hyperlink,
+        )
+        db.add(new_cell)
+
+    ws.updated_at = _now()
+    db.commit()
+
+    import asyncio
+    asyncio.create_task(hub.broadcast(workspace_id, {
+        "type": "sheet_added",
+        "sheet_id": new_sheet.id,
+        "name": copy_name,
+        "sheet_index": new_sheet.sheet_index,
+    }))
+
+    return {
+        "id": new_sheet.id,
+        "name": copy_name,
+        "sheet_index": new_sheet.sheet_index,
+    }
+
+
 @admin_router.delete("/{workspace_id}/sheets/{sheet_id}", status_code=204)
 async def delete_workspace_sheet(
     workspace_id: str,
@@ -730,23 +947,52 @@ async def import_workspace_xlsx(
 
         ws_sheet.freeze_panes = str(excel_ws.freeze_panes) if excel_ws.freeze_panes else None
 
+        # 숨겨진 행/열
+        hidden_rows = [row_num - 1 for row_num, rd in excel_ws.row_dimensions.items() if rd.hidden]
+        ws_sheet.hidden_rows = json.dumps(hidden_rows) if hidden_rows else None
+        hidden_cols = []
+        for col_letter, cd in excel_ws.column_dimensions.items():
+            if cd.hidden:
+                try:
+                    from openpyxl.utils import column_index_from_string
+                    hidden_cols.append(column_index_from_string(col_letter) - 1)
+                except Exception:
+                    pass
+        ws_sheet.hidden_cols = json.dumps(hidden_cols) if hidden_cols else None
+
+        # 조건부 서식 추출
+        cf_rules = _extract_conditional_formats(excel_ws)
+        ws_sheet.conditional_formats = json.dumps(cf_rules) if cf_rules else None
+
+        # 데이터 유효성 검사 추출
+        dv_rules = _extract_data_validations(excel_ws)
+        ws_sheet.data_validations = json.dumps(dv_rules) if dv_rules else None
+
+        # 행/열 그룹 추출
+        row_outlines, col_outlines = _extract_outlines(excel_ws)
+        ws_sheet.outline_rows = json.dumps(row_outlines) if row_outlines else None
+        ws_sheet.outline_cols = json.dumps(col_outlines) if col_outlines else None
+
         for ri, row in enumerate(all_rows[:10000]):
             for ci in range(num_cols):
                 cell = row[ci] if ci < len(row) else None
                 if cell is None or cell.value is None:
                     style_json = _extract_cell_style(cell, theme_colors) if cell else None
                     comment_text = cell.comment.text.strip() if cell and cell.comment else None
-                    if style_json or comment_text:
+                    hyperlink_url = cell.hyperlink.target if cell and cell.hyperlink and cell.hyperlink.target else None
+                    if style_json or comment_text or hyperlink_url:
                         db.add(WorkspaceCell(
                             id=str(uuid.uuid4()), sheet_id=ws_sheet.id,
                             row_index=ri, col_index=ci,
                             value=None, style=style_json, comment=comment_text,
+                            hyperlink=hyperlink_url,
                             updated_by=current_user.id, updated_at=_now(),
                         ))
                     continue
                 raw = cell.value
                 style_json = _extract_cell_style(cell, theme_colors)
                 comment_text = cell.comment.text.strip() if cell.comment else None
+                hyperlink_url = cell.hyperlink.target if cell.hyperlink and cell.hyperlink.target else None
                 if cell.data_type == 'f' or (isinstance(raw, str) and raw.startswith("=")):
                     raw_str = str(raw)
                     val = raw_str if raw_str.startswith("=") else "=" + raw_str
@@ -760,6 +1006,7 @@ async def import_workspace_xlsx(
                     value=val,
                     style=style_json,
                     comment=comment_text,
+                    hyperlink=hyperlink_url,
                     updated_by=current_user.id,
                     updated_at=_now(),
                 ))
@@ -822,6 +1069,22 @@ async def export_workspace_xlsx(
             if c.comment:
                 from openpyxl.comments import Comment as XlComment
                 excel_cell.comment = XlComment(c.comment, "")
+            if c.hyperlink:
+                excel_cell.hyperlink = c.hyperlink
+
+        # 숨겨진 행/열 복원
+        if ws_sheet.hidden_rows:
+            try:
+                for ri in json.loads(ws_sheet.hidden_rows):
+                    excel_ws.row_dimensions[ri + 1].hidden = True
+            except Exception:
+                pass
+        if ws_sheet.hidden_cols:
+            try:
+                for ci in json.loads(ws_sheet.hidden_cols):
+                    excel_ws.column_dimensions[get_column_letter(ci + 1)].hidden = True
+            except Exception:
+                pass
 
         # 병합 셀 복원
         if ws_sheet.merges:
@@ -830,6 +1093,34 @@ async def export_workspace_xlsx(
                     excel_ws.merge_cells(rng)
             except Exception:
                 pass
+
+        # 조건부 서식 복원
+        if ws_sheet.conditional_formats:
+            try:
+                cf_rules = json.loads(ws_sheet.conditional_formats)
+                _apply_conditional_formats(excel_ws, cf_rules)
+            except Exception:
+                pass
+
+        # 데이터 유효성 검사 복원
+        if ws_sheet.data_validations:
+            try:
+                dv_rules = json.loads(ws_sheet.data_validations)
+                _apply_data_validations(excel_ws, dv_rules)
+            except Exception:
+                pass
+
+        # 행/열 그룹 복원
+        row_ol = {}
+        col_ol = {}
+        if ws_sheet.outline_rows:
+            try: row_ol = json.loads(ws_sheet.outline_rows)
+            except: pass
+        if ws_sheet.outline_cols:
+            try: col_ol = json.loads(ws_sheet.outline_cols)
+            except: pass
+        if row_ol or col_ol:
+            _apply_outlines(excel_ws, row_ol, col_ol)
 
     buf = io.BytesIO()
     wb.save(buf)

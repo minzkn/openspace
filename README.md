@@ -9,13 +9,20 @@
 1. [주요 기능](#주요-기능)
 2. [빠른 시작](#빠른-시작)
 3. [환경 변수](#환경-변수)
-4. [디렉터리 구조](#디렉터리-구조)
-5. [기술 스택](#기술-스택)
-6. [아키텍처](#아키텍처)
-7. [API 개요](#api-개요)
-8. [보안](#보안)
-9. [운영 주의사항](#운영-주의사항)
-10. [라이선스](#라이선스)
+4. [프로덕션 배포](#프로덕션-배포)
+   - [systemd 서비스 등록](#systemd-서비스-등록)
+   - [Nginx 리버스 프록시](#nginx-리버스-프록시)
+   - [Apache 리버스 프록시](#apache-리버스-프록시)
+   - [SSL/TLS 인증서 설정](#ssltls-인증서-설정)
+5. [데이터베이스 관리](#데이터베이스-관리)
+6. [디렉터리 구조](#디렉터리-구조)
+7. [기술 스택](#기술-스택)
+8. [아키텍처](#아키텍처)
+9. [API 개요](#api-개요)
+10. [보안](#보안)
+11. [운영 주의사항](#운영-주의사항)
+12. [문제 해결](#문제-해결)
+13. [라이선스](#라이선스)
 
 ---
 
@@ -63,6 +70,7 @@
 
 - Python 3.10+
 - (선택) Python 가상환경 (`python3-venv`)
+- 지원 OS: Linux, macOS, Windows (WSL 권장)
 
 ### 설치 및 실행
 
@@ -80,12 +88,48 @@ cp .env.example .env
 
 초기 계정: **admin / admin** (SUPER_ADMIN)
 
+> 첫 로그인 후 반드시 비밀번호를 변경하세요.
+
 ### start.sh 동작
 
-1. Python 가상환경 생성 (`.venv/`) 또는 시스템 pip3 fallback
-2. `pip install -r requirements.txt`
-3. `init_db.py` 실행 (DB + 기본 계정 생성)
-4. `uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1`
+1. `.env` 파일이 없으면 `.env.example`에서 자동 복사
+2. Python 가상환경 생성 (`.venv/`) 또는 시스템 pip3 fallback
+3. `pip install -r requirements.txt`
+4. `init_db.py` 실행 (DB 스키마 생성 + 마이그레이션 + 기본 계정 생성, 멱등)
+5. `uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1`
+
+### 수동 설치 (start.sh 미사용)
+
+```bash
+cd openspace
+
+# 가상환경 생성 및 활성화
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 의존성 설치
+pip install -r requirements.txt
+
+# 환경 변수 설정
+cp .env.example .env
+# .env 파일을 편집하여 SECRET_KEY, KEK_KEY 변경
+
+# DB 초기화
+python3 init_db.py
+
+# 서버 시작
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+```
+
+### 포트 변경
+
+기본 포트(8000)를 변경하려면 uvicorn 실행 시 `--port` 옵션을 수정합니다.
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 9000 --workers 1
+```
+
+> `start.sh`를 직접 수정하거나, 수동 실행으로 포트를 지정할 수 있습니다.
 
 ---
 
@@ -95,13 +139,558 @@ cp .env.example .env
 
 | 변수 | 설명 | 기본값 |
 |------|------|--------|
-| `SECRET_KEY` | 세션 서명 키 (64자 hex) | `0x00...` — **반드시 변경** |
-| `KEK_KEY` | 필드 암호화 키 (64자 hex) | `0x11...` — **반드시 변경** |
+| `SECRET_KEY` | 세션 서명 키 (64자 hex = 32바이트) | `0x00...` — **반드시 변경** |
+| `KEK_KEY` | 필드 암호화 키 (64자 hex = 32바이트) | `0x11...` — **반드시 변경** |
 | `DATABASE_URL` | SQLite 경로 | `sqlite:///./openspace.db` |
 | `SESSION_TTL_SECONDS` | 세션 유효 시간(초) | `28800` (8시간) |
 | `DEBUG` | 개발 모드 (`true` / `false`) | `true` |
+| `MAX_UPLOAD_SIZE` | 최대 파일 업로드 크기 (바이트) | `52428800` (50MB) |
+| `ALLOWED_HOSTS` | 허용할 호스트 목록 (JSON 배열) | `["*"]` |
 
-> `DEBUG=false` 이면 세션 쿠키에 `Secure` 플래그가 추가됩니다 → HTTPS(Nginx) 필수
+### 프로덕션 키 생성
+
+```bash
+# SECRET_KEY 생성 (64자 hex)
+python3 -c "import secrets; print(secrets.token_hex(32))"
+
+# KEK_KEY 생성 (64자 hex)
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+> `DEBUG=false` 이면 세션 쿠키에 `Secure` 플래그가 추가됩니다 → HTTPS 필수
+>
+> `ALLOWED_HOSTS`를 설정하면 TrustedHostMiddleware가 활성화되어, 지정한 호스트 외의 요청을 차단합니다.
+
+### .env 파일 예시 (프로덕션)
+
+```env
+SECRET_KEY=a1b2c3d4e5f6...  # python3 -c "import secrets; print(secrets.token_hex(32))" 로 생성
+KEK_KEY=f6e5d4c3b2a1...     # 위와 동일하게 생성
+DATABASE_URL=sqlite:///./openspace.db
+SESSION_TTL_SECONDS=28800
+DEBUG=false
+MAX_UPLOAD_SIZE=52428800
+ALLOWED_HOSTS=["openspace.example.com", "www.openspace.example.com"]
+```
+
+---
+
+## 프로덕션 배포
+
+프로덕션 환경에서는 Uvicorn을 직접 노출하지 않고, 리버스 프록시(Nginx 또는 Apache)를 통해 HTTPS를 제공합니다.
+
+```
+[브라우저] ──HTTPS──> [Nginx/Apache :443] ──HTTP──> [Uvicorn :8000]
+                                          ──WS───>
+```
+
+### systemd 서비스 등록
+
+Uvicorn을 시스템 서비스로 등록하면 서버 재부팅 시 자동 시작됩니다.
+
+#### 1. 서비스 사용자 생성 (선택)
+
+```bash
+sudo useradd -r -s /bin/false -d /opt/openspace openspace
+sudo mkdir -p /opt/openspace
+sudo cp -r . /opt/openspace/
+sudo chown -R openspace:openspace /opt/openspace
+```
+
+#### 2. 가상환경 및 초기화
+
+```bash
+sudo -u openspace bash -c '
+  cd /opt/openspace
+  python3 -m venv .venv
+  source .venv/bin/activate
+  pip install -r requirements.txt
+  cp .env.example .env
+  # .env 편집 후:
+  python3 init_db.py
+'
+```
+
+> `.env` 파일에서 `SECRET_KEY`, `KEK_KEY`를 반드시 변경하고, `DEBUG=false`로 설정하세요.
+
+#### 3. systemd Unit 파일 생성
+
+```bash
+sudo tee /etc/systemd/system/openspace.service > /dev/null << 'EOF'
+[Unit]
+Description=OpenSpace Excel Collaboration Workspace
+After=network.target
+
+[Service]
+Type=exec
+User=openspace
+Group=openspace
+WorkingDirectory=/opt/openspace
+Environment=PATH=/opt/openspace/.venv/bin:/usr/bin:/bin
+ExecStart=/opt/openspace/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 1 \
+    --log-level info
+Restart=on-failure
+RestartSec=5
+
+# 보안 강화 옵션
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/openspace
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+> `--host 127.0.0.1`: 리버스 프록시 사용 시 로컬만 바인딩합니다.
+> `--workers 1`: SQLite WAL + 인메모리 WSHub 특성상 **반드시 1**이어야 합니다.
+
+#### 4. 서비스 활성화 및 시작
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable openspace
+sudo systemctl start openspace
+
+# 상태 확인
+sudo systemctl status openspace
+
+# 로그 확인
+sudo journalctl -u openspace -f
+```
+
+#### 5. 서비스 관리 명령
+
+```bash
+# 서비스 중지
+sudo systemctl stop openspace
+
+# 서비스 재시작
+sudo systemctl restart openspace
+
+# 로그 보기 (최근 100줄)
+sudo journalctl -u openspace -n 100 --no-pager
+
+# 실시간 로그 추적
+sudo journalctl -u openspace -f
+```
+
+---
+
+### Nginx 리버스 프록시
+
+#### 전제 조건
+
+```bash
+# Ubuntu/Debian
+sudo apt install nginx
+
+# RHEL/CentOS/Rocky
+sudo dnf install nginx
+```
+
+#### HTTP 전용 (개발/내부망)
+
+`/etc/nginx/sites-available/openspace` (또는 `/etc/nginx/conf.d/openspace.conf`):
+
+```nginx
+upstream openspace_backend {
+    server 127.0.0.1:8000;
+}
+
+server {
+    listen 80;
+    server_name openspace.example.com;
+
+    # 최대 업로드 크기 (xlsx 파일)
+    client_max_body_size 50M;
+
+    # 요청 타임아웃
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+
+    # 정적 파일 직접 제공 (선택 — 성능 최적화)
+    location /static/ {
+        alias /opt/openspace/web/static/;
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # API 및 페이지
+    location / {
+        proxy_pass http://openspace_backend;
+        proxy_http_version 1.1;
+
+        # WebSocket 지원
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # 원본 클라이언트 정보 전달
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+```bash
+# 사이트 활성화 (sites-available 방식)
+sudo ln -s /etc/nginx/sites-available/openspace /etc/nginx/sites-enabled/
+
+# 설정 검증
+sudo nginx -t
+
+# Nginx 재시작
+sudo systemctl reload nginx
+```
+
+#### HTTPS (프로덕션 권장)
+
+```nginx
+upstream openspace_backend {
+    server 127.0.0.1:8000;
+}
+
+# HTTP → HTTPS 리다이렉트
+server {
+    listen 80;
+    server_name openspace.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name openspace.example.com;
+
+    # SSL 인증서
+    ssl_certificate     /etc/letsencrypt/live/openspace.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/openspace.example.com/privkey.pem;
+
+    # SSL 보안 설정
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # OCSP Stapling
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    ssl_trusted_certificate /etc/letsencrypt/live/openspace.example.com/chain.pem;
+
+    # 최대 업로드 크기
+    client_max_body_size 50M;
+
+    # 요청 타임아웃
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+
+    # 정적 파일 직접 제공 (선택)
+    location /static/ {
+        alias /opt/openspace/web/static/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # API 및 페이지
+    location / {
+        proxy_pass http://openspace_backend;
+        proxy_http_version 1.1;
+
+        # WebSocket 지원
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # 원본 클라이언트 정보 전달
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+```
+
+---
+
+### Apache 리버스 프록시
+
+#### 전제 조건
+
+```bash
+# Ubuntu/Debian
+sudo apt install apache2
+
+# 필수 모듈 활성화
+sudo a2enmod proxy proxy_http proxy_wstunnel headers rewrite ssl
+sudo systemctl restart apache2
+```
+
+```bash
+# RHEL/CentOS/Rocky
+sudo dnf install httpd mod_ssl
+
+# 모듈 확인 (기본 설치에 포함)
+httpd -M | grep -E 'proxy|headers|rewrite|ssl'
+```
+
+#### HTTP 전용 (개발/내부망)
+
+`/etc/apache2/sites-available/openspace.conf` (Debian 계열) 또는 `/etc/httpd/conf.d/openspace.conf` (RHEL 계열):
+
+```apache
+<VirtualHost *:80>
+    ServerName openspace.example.com
+
+    # 최대 업로드 크기 (요청 본문)
+    LimitRequestBody 52428800
+
+    # 요청 타임아웃
+    ProxyTimeout 300
+    Timeout 300
+
+    # 정적 파일 직접 제공 (선택)
+    Alias /static/ /opt/openspace/web/static/
+    <Directory /opt/openspace/web/static/>
+        Require all granted
+        Options -Indexes
+        <IfModule mod_expires.c>
+            ExpiresActive On
+            ExpiresDefault "access plus 7 days"
+        </IfModule>
+    </Directory>
+
+    # WebSocket 프록시 (일반 HTTP 프록시보다 먼저 선언)
+    RewriteEngine On
+    RewriteCond %{HTTP:Upgrade} websocket [NC]
+    RewriteCond %{HTTP:Connection} upgrade [NC]
+    RewriteRule ^/ws/(.*) ws://127.0.0.1:8000/ws/$1 [P,L]
+
+    # HTTP 리버스 프록시
+    ProxyPreserveHost On
+    ProxyPass /static/ !
+    ProxyPass / http://127.0.0.1:8000/
+    ProxyPassReverse / http://127.0.0.1:8000/
+
+    # 원본 클라이언트 정보 전달
+    RequestHeader set X-Forwarded-Proto "http"
+    RequestHeader set X-Real-IP "%{REMOTE_ADDR}s"
+</VirtualHost>
+```
+
+```bash
+# Debian 계열: 사이트 활성화
+sudo a2ensite openspace.conf
+sudo apache2ctl configtest
+sudo systemctl reload apache2
+
+# RHEL 계열: 설정 검증 및 적용
+sudo httpd -t
+sudo systemctl reload httpd
+```
+
+#### HTTPS (프로덕션 권장)
+
+```apache
+# HTTP → HTTPS 리다이렉트
+<VirtualHost *:80>
+    ServerName openspace.example.com
+    RewriteEngine On
+    RewriteRule ^(.*)$ https://%{HTTP_HOST}$1 [R=301,L]
+</VirtualHost>
+
+<VirtualHost *:443>
+    ServerName openspace.example.com
+
+    # SSL 설정
+    SSLEngine On
+    SSLCertificateFile    /etc/letsencrypt/live/openspace.example.com/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/openspace.example.com/privkey.pem
+
+    # SSL 보안 설정
+    SSLProtocol all -SSLv3 -TLSv1 -TLSv1.1
+    SSLCipherSuite ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384
+    SSLHonorCipherOrder off
+
+    # HSTS 헤더 (Uvicorn이 이미 설정하지만 리버스 프록시에서도 추가 가능)
+    Header always set Strict-Transport-Security "max-age=31536000"
+
+    # 최대 업로드 크기
+    LimitRequestBody 52428800
+
+    # 요청 타임아웃
+    ProxyTimeout 300
+    Timeout 300
+
+    # 정적 파일 직접 제공 (선택)
+    Alias /static/ /opt/openspace/web/static/
+    <Directory /opt/openspace/web/static/>
+        Require all granted
+        Options -Indexes
+        <IfModule mod_expires.c>
+            ExpiresActive On
+            ExpiresDefault "access plus 30 days"
+        </IfModule>
+    </Directory>
+
+    # WebSocket 프록시 (반드시 일반 ProxyPass보다 먼저)
+    RewriteEngine On
+    RewriteCond %{HTTP:Upgrade} websocket [NC]
+    RewriteCond %{HTTP:Connection} upgrade [NC]
+    RewriteRule ^/ws/(.*) ws://127.0.0.1:8000/ws/$1 [P,L]
+
+    # HTTP 리버스 프록시
+    ProxyPreserveHost On
+    ProxyPass /static/ !
+    ProxyPass / http://127.0.0.1:8000/
+    ProxyPassReverse / http://127.0.0.1:8000/
+
+    # 원본 클라이언트 정보 전달
+    RequestHeader set X-Forwarded-Proto "https"
+    RequestHeader set X-Real-IP "%{REMOTE_ADDR}s"
+</VirtualHost>
+```
+
+> **Apache WebSocket 주의**: `mod_proxy_wstunnel`이 반드시 활성화되어 있어야 합니다.
+> `RewriteRule`의 WebSocket 프록시가 일반 `ProxyPass`보다 먼저 선언되어야 정상 동작합니다.
+
+#### Apache SELinux 설정 (RHEL 계열)
+
+SELinux가 활성화된 환경에서는 Apache가 네트워크 연결을 할 수 있도록 허용해야 합니다.
+
+```bash
+# Apache가 백엔드로 연결할 수 있도록 허용
+sudo setsebool -P httpd_can_network_connect 1
+
+# 정적 파일 디렉터리 접근 허용
+sudo semanage fcontext -a -t httpd_sys_content_t "/opt/openspace/web/static(/.*)?"
+sudo restorecon -Rv /opt/openspace/web/static/
+```
+
+---
+
+### SSL/TLS 인증서 설정
+
+#### Let's Encrypt (무료, 자동 갱신)
+
+```bash
+# certbot 설치
+sudo apt install certbot                          # Debian/Ubuntu
+sudo dnf install certbot                          # RHEL/CentOS
+
+# Nginx 플러그인
+sudo apt install python3-certbot-nginx            # Debian/Ubuntu
+sudo certbot --nginx -d openspace.example.com
+
+# Apache 플러그인
+sudo apt install python3-certbot-apache           # Debian/Ubuntu
+sudo certbot --apache -d openspace.example.com
+
+# 수동 발급 (Standalone — 웹 서버 중지 필요)
+sudo certbot certonly --standalone -d openspace.example.com
+
+# 갱신 테스트
+sudo certbot renew --dry-run
+```
+
+인증서 파일 위치:
+
+```
+/etc/letsencrypt/live/openspace.example.com/
+├── fullchain.pem   ← ssl_certificate (Nginx) / SSLCertificateFile (Apache)
+├── privkey.pem     ← ssl_certificate_key (Nginx) / SSLCertificateKeyFile (Apache)
+└── chain.pem       ← ssl_trusted_certificate (Nginx, OCSP Stapling)
+```
+
+#### 자체 서명 인증서 (내부망/테스트)
+
+```bash
+sudo mkdir -p /etc/ssl/openspace
+
+sudo openssl req -x509 -nodes -days 3650 \
+    -newkey rsa:2048 \
+    -keyout /etc/ssl/openspace/server.key \
+    -out /etc/ssl/openspace/server.crt \
+    -subj "/CN=openspace.example.com"
+```
+
+Nginx/Apache 설정에서 인증서 경로를 위 파일로 변경하면 됩니다.
+
+> 자체 서명 인증서는 브라우저에서 경고가 표시됩니다. 내부망 전용으로만 사용하세요.
+
+---
+
+## 데이터베이스 관리
+
+### DB 파일 위치
+
+기본 설정: 프로젝트 루트의 `openspace.db` (SQLite WAL 모드)
+
+```bash
+# 실제 파일 (WAL 모드에서 3개 파일)
+openspace.db         # 메인 DB
+openspace.db-wal     # Write-Ahead Log
+openspace.db-shm     # 공유 메모리
+```
+
+### 백업
+
+```bash
+# 온라인 백업 (서비스 중단 없이 안전하게 백업)
+sqlite3 openspace.db ".backup /backup/openspace_$(date +%Y%m%d_%H%M%S).db"
+
+# 또는 단순 파일 복사 (서비스 중지 후)
+sudo systemctl stop openspace
+cp openspace.db openspace.db-wal openspace.db-shm /backup/
+sudo systemctl start openspace
+```
+
+### 자동 백업 (crontab)
+
+```bash
+# 매일 03:00에 백업 (최근 30일 보관)
+sudo crontab -e
+```
+
+```cron
+0 3 * * * sqlite3 /opt/openspace/openspace.db ".backup /backup/openspace/openspace_$(date +\%Y\%m\%d).db" && find /backup/openspace/ -name "*.db" -mtime +30 -delete
+```
+
+### 복원
+
+```bash
+sudo systemctl stop openspace
+cp /backup/openspace_20260227.db /opt/openspace/openspace.db
+sudo systemctl start openspace
+```
+
+### 마이그레이션
+
+`init_db.py`가 실행 시 모든 마이그레이션을 자동으로 적용합니다 (멱등).
+
+```bash
+# 수동 마이그레이션 실행
+cd /opt/openspace
+source .venv/bin/activate
+python3 init_db.py
+```
+
+현재 마이그레이션 목록:
+
+| 파일 | 내용 |
+|------|------|
+| `001_initial.sql` | 전체 스키마 (users, templates, workspaces, cells 등) |
+| `002_nullable_template_fk.sql` | workspace FK nullable 변경 |
+| `003_sheet_meta.sql` | merges, row_heights, freeze_panes 컬럼 추가 |
+| `004_must_change_password.sql` | 비밀번호 변경 강제 플래그 |
+| `005_cell_comments.sql` | 셀 코멘트 기능 |
+| `006_conditional_formats.sql` | 조건부 서식 |
+| `007_col_widths.sql` | 열 너비 저장 |
 
 ---
 
@@ -147,7 +736,8 @@ openspace/
 ├── migrations/
 │   ├── 001_initial.sql
 │   ├── 002_nullable_template_fk.sql
-│   └── 003_sheet_meta.sql         # merges / row_heights / freeze_panes 컬럼
+│   ├── 003_sheet_meta.sql
+│   └── ...
 ├── init_db.py
 ├── start.sh
 ├── requirements.txt
@@ -297,6 +887,8 @@ DB: xlsx 범위 문자열 목록
 | 클릭재킹 | X-Frame-Options: DENY |
 | RBAC | 서버에서 강제 적용, 클라이언트 값 신뢰 안 함 |
 | ADMIN 제한 | ADMIN은 SUPER_ADMIN 계정을 관리할 수 없음 |
+| HSTS | `DEBUG=false` 시 Strict-Transport-Security 헤더 자동 추가 |
+| CSP | `script-src 'self'`, 외부 도메인 차단 |
 
 ---
 
@@ -304,27 +896,75 @@ DB: xlsx 범위 문자열 목록
 
 1. **workers=1 필수** — SQLite WAL + 인메모리 WSHub는 단일 프로세스에서만 동작합니다.
 2. **SECRET_KEY, KEK_KEY 변경** — `.env.example`의 기본값은 개발용입니다. 프로덕션에서 반드시 64자 난수 hex로 교체하세요.
-3. **HTTPS 필수 (프로덕션)** — `DEBUG=false` 설정 시 쿠키에 `Secure` 플래그가 추가됩니다. Nginx 등 리버스 프록시로 TLS를 제공해야 합니다.
+3. **HTTPS 필수 (프로덕션)** — `DEBUG=false` 설정 시 쿠키에 `Secure` 플래그가 추가됩니다. Nginx/Apache 리버스 프록시로 TLS를 제공해야 합니다.
 4. **`.env` git 제외** — `.gitignore`에 `.env`를 추가하세요.
-5. **DB 백업** — `openspace.db` 파일을 정기 백업하세요.
+5. **DB 백업** — `openspace.db` 파일을 정기 백업하세요 ([데이터베이스 관리](#데이터베이스-관리) 참조).
 6. **폐쇄망(오프라인) 완전 지원** — 모든 프론트엔드 라이브러리가 `web/static/lib/`에 로컬 번들링되어 있어 외부 인터넷 연결이 필요 없습니다. CDN 의존성이 없으므로 폐쇄망 환경에서도 즉시 사용 가능합니다.
+7. **파일 업로드 크기** — `MAX_UPLOAD_SIZE` 환경 변수(기본 50MB)와 리버스 프록시의 `client_max_body_size`(Nginx) 또는 `LimitRequestBody`(Apache) 값을 일치시키세요.
 
-### Nginx 리버스 프록시 예시
+---
 
-```nginx
-server {
-    listen 443 ssl;
-    server_name example.com;
+## 문제 해결
 
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
+### 서버가 시작되지 않음
+
+```bash
+# 포트 충돌 확인
+ss -tlnp | grep 8000
+
+# Python 버전 확인 (3.10+ 필요)
+python3 --version
+
+# 의존성 설치 확인
+pip list | grep -E 'fastapi|uvicorn|sqlalchemy'
+```
+
+### WebSocket 연결 실패
+
+- **Nginx**: `proxy_http_version 1.1`, `Upgrade`, `Connection` 헤더가 올바르게 설정되었는지 확인
+- **Apache**: `mod_proxy_wstunnel`이 활성화되었는지 확인 (`a2enmod proxy_wstunnel`)
+- **방화벽**: 443(HTTPS) 또는 80(HTTP) 포트가 열려 있는지 확인
+- **브라우저 콘솔**: WebSocket 연결 URL이 `ws://` (HTTP) 또는 `wss://` (HTTPS)인지 확인
+
+### CSRF 토큰 오류 (403)
+
+- 브라우저 쿠키가 활성화되어 있는지 확인
+- 리버스 프록시에서 쿠키 헤더가 올바르게 전달되는지 확인
+- `ProxyPreserveHost On` (Apache) 또는 `proxy_set_header Host $host` (Nginx) 설정 확인
+
+### xlsx 업로드 실패
+
+- 파일 크기가 `MAX_UPLOAD_SIZE` 이하인지 확인
+- 리버스 프록시의 업로드 크기 제한 확인:
+  - Nginx: `client_max_body_size`
+  - Apache: `LimitRequestBody`
+
+### 세션이 유지되지 않음
+
+- `DEBUG=false`인 경우 HTTPS가 필요합니다 (쿠키에 `Secure` 플래그)
+- `SESSION_TTL_SECONDS` 값 확인 (기본 8시간)
+- 리버스 프록시에서 `Host` 헤더가 올바르게 전달되는지 확인
+
+### DB 잠금 오류 (database is locked)
+
+- `--workers 1` 옵션으로 실행 중인지 확인
+- 다른 프로세스가 DB에 접근하고 있지 않은지 확인
+- WAL 모드 확인: `sqlite3 openspace.db "PRAGMA journal_mode;"`
+
+### 로그 확인
+
+```bash
+# systemd 서비스 로그
+sudo journalctl -u openspace -f
+
+# start.sh로 실행 시 — 터미널에 직접 출력
+
+# Nginx 오류 로그
+sudo tail -f /var/log/nginx/error.log
+
+# Apache 오류 로그
+sudo tail -f /var/log/apache2/error.log     # Debian
+sudo tail -f /var/log/httpd/error_log       # RHEL
 ```
 
 ---

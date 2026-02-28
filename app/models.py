@@ -274,3 +274,66 @@ class Session(Base):
     )
 
     user = relationship("User", back_populates="sessions")
+
+
+class TextDocument(Base):
+    __tablename__ = "text_documents"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    title = Column(String, nullable=False)
+    language = Column(String, nullable=False, default="plaintext")
+    status = Column(String, nullable=False, default="OPEN")
+    version = Column(Integer, nullable=False, default=1)
+    created_by = Column(String, ForeignKey("users.id"), nullable=False)
+    closed_by = Column(String, ForeignKey("users.id"))
+    closed_at = Column(String)
+    created_at = Column(String, nullable=False, default=_now)
+    updated_at = Column(String, nullable=False, default=_now)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('OPEN','CLOSED')", name="ck_td_status"),
+        CheckConstraint(
+            "language IN ('plaintext','javascript','python','html','css','markdown','xml','sql','json')",
+            name="ck_td_language",
+        ),
+    )
+
+    creator = relationship("User", foreign_keys=[created_by])
+    closer = relationship("User", foreign_keys=[closed_by])
+    contents = relationship("TextDocumentContent", back_populates="document", cascade="all, delete-orphan",
+                            order_by="TextDocumentContent.version.desc()")
+    change_logs = relationship("TextDocumentChangeLog", back_populates="document", cascade="all, delete-orphan")
+
+
+class TextDocumentContent(Base):
+    __tablename__ = "text_document_content"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    document_id = Column(String, ForeignKey("text_documents.id", ondelete="CASCADE"), nullable=False)
+    content = Column(Text, nullable=False, default="")
+    version = Column(Integer, nullable=False, default=1)
+    updated_by = Column(String, ForeignKey("users.id"))
+    updated_at = Column(String, nullable=False, default=_now)
+
+    __table_args__ = (UniqueConstraint("document_id", "version"),)
+
+    document = relationship("TextDocument", back_populates="contents")
+    updater = relationship("User")
+
+
+class TextDocumentChangeLog(Base):
+    __tablename__ = "text_document_change_logs"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    document_id = Column(String, ForeignKey("text_documents.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    version = Column(Integer, nullable=False)
+    content_size = Column(Integer, nullable=False, default=0)
+    changed_at = Column(String, nullable=False, default=_now)
+
+    __table_args__ = (
+        Index("idx_tdcl_document", "document_id"),
+    )
+
+    document = relationship("TextDocument", back_populates="change_logs")
+    user = relationship("User")

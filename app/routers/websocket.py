@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session as DBSession
 from ..database import get_db, SessionLocal
 from ..models import (
     Workspace, WorkspaceSheet, WorkspaceCell, TemplateSheet,
-    ChangeLog, Session as UserSession, User, _now
+    ChangeLog, Session as UserSession, User, TextDocument, _now
 )
 from ..ws_hub import hub
 from ..rbac import is_admin_or_above
@@ -306,3 +306,69 @@ async def _handle_batch_patch(websocket, workspace_id, msg, user, db, ws_obj):
             "updated_by": user.username,
         }
         await hub.broadcast(workspace_id, broadcast_msg, exclude=websocket)
+
+
+# ================================================================
+# Text Document WebSocket
+# ================================================================
+
+@router.websocket("/ws/text-documents/{document_id}")
+async def ws_textdoc_endpoint(websocket: WebSocket, document_id: str):
+    session_id = websocket.cookies.get("session_id") or websocket.query_params.get("session_id")
+    if not session_id:
+        await websocket.close(code=4001)
+        return
+
+    user, db = _get_user_from_session(session_id)
+    if not user:
+        db.close()
+        await websocket.close(code=4001)
+        return
+
+    doc = db.query(TextDocument).filter(TextDocument.id == document_id).first()
+    if not doc:
+        db.close()
+        await websocket.close(code=4004)
+        return
+
+    room = f"textdoc:{document_id}"
+    await websocket.accept()
+    await hub.connect(room, websocket)
+
+    await websocket.send_json({
+        "type": "connected",
+        "document_status": doc.status,
+        "username": user.username,
+    })
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "message": "Invalid JSON"})
+                continue
+
+            msg_type = msg.get("type")
+
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong"})
+            elif msg_type == "cursor":
+                # 커서 위치 브로드캐스트 (편집 위치 공유)
+                await hub.broadcast(room, {
+                    "type": "cursor",
+                    "username": user.username,
+                    "line": msg.get("line", 0),
+                    "ch": msg.get("ch", 0),
+                }, exclude=websocket)
+            else:
+                await websocket.send_json({"type": "error", "message": f"Unknown type: {msg_type}"})
+
+    except WebSocketDisconnect:
+        logger.debug(f"WS textdoc disconnected: user={user.username} doc={document_id}")
+    except Exception as e:
+        logger.exception(f"WS textdoc error: {e}")
+    finally:
+        await hub.disconnect(room, websocket)
+        db.close()

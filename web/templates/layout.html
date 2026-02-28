@@ -33,11 +33,17 @@
       <li><a href="/admin/workspaces" class="{% if '/admin/workspaces' in request.url.path %}active{% endif %}">
         <span class="icon">&#128202;</span> 워크스페이스 관리
       </a></li>
+      <li><a href="/admin/text-documents" class="{% if '/admin/text-documents' in request.url.path %}active{% endif %}">
+        <span class="icon">&#128221;</span> 텍스트 문서 관리
+      </a></li>
       <li class="menu-group">사용</li>
       {% endif %}
 
       <li><a href="/workspaces" class="{% if request.url.path == '/workspaces' %}active{% endif %}">
         <span class="icon">&#128203;</span> 워크스페이스
+      </a></li>
+      <li><a href="/text-documents" class="{% if request.url.path == '/text-documents' %}active{% endif %}">
+        <span class="icon">&#128221;</span> 텍스트 문서
       </a></li>
     </ul>
   </nav>

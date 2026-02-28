@@ -1,0 +1,55 @@
+{% extends "layout.html" %}
+{% block title %}{{ document.title }} - OpenSpace{% endblock %}
+{% block page_title %}{{ document.title }}{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/css/style.css?v=20260228">
+{% endblock %}
+
+{% block content %}
+<div class="doc-header">
+  <div class="doc-info">
+    <a href="/text-documents" class="btn btn-secondary btn-sm">&#8592; 목록</a>
+    <span class="badge {{ document.status|lower }}">{{ document.status }}</span>
+    <span class="conn-dot disconnected" id="conn-dot" title="연결 상태"></span>
+    <span class="doc-save-status" id="save-status">준비</span>
+  </div>
+  <div class="doc-actions">
+    <select id="lang-select" class="fmt-select" onchange="changeLang(this.value)">
+      <option value="plaintext">Plain Text</option>
+      <option value="javascript">JavaScript</option>
+      <option value="python">Python</option>
+      <option value="html">HTML</option>
+      <option value="css">CSS</option>
+      <option value="markdown">Markdown</option>
+      <option value="xml">XML</option>
+      <option value="sql">SQL</option>
+      <option value="json">JSON</option>
+    </select>
+    <button class="btn btn-secondary btn-sm" onclick="downloadDoc()">다운로드</button>
+    {% if is_admin %}
+    <button class="btn btn-sm" id="toggle-status-btn" onclick="toggleDocStatus()">
+      {{ '재개' if document.status == 'CLOSED' else '마감' }}
+    </button>
+    {% endif %}
+  </div>
+</div>
+
+<div class="editor-container" id="editor-container"></div>
+
+<div class="doc-footer">
+  <span id="cursor-info">줄 1, 열 1</span>
+  <span id="version-info">v{{ document.version }}</span>
+</div>
+
+<script>
+  const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
+  const CURRENT_USER = "{{ current_user.username }}";
+  const DOC_DATA = {{ document_data_json | safe }};
+</script>
+<script src="/static/lib/codemirror.bundle.js"></script>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/text_document.js"></script>
+{% endblock %}

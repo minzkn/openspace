@@ -1,0 +1,30 @@
+{% extends "layout.html" %}
+{% block title %}텍스트 문서 - OpenSpace{% endblock %}
+{% block page_title %}텍스트 문서{% endblock %}
+
+{% block content %}
+<div class="table-container">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>제목</th>
+        <th>언어</th>
+        <th>상태</th>
+        <th>생성일</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for doc in documents %}
+      <tr>
+        <td><a href="/text-documents/{{ doc.id }}" style="color:var(--primary); font-weight:500">{{ doc.title }}</a></td>
+        <td>{{ doc.language }}</td>
+        <td><span class="badge {{ doc.status|lower }}">{{ doc.status }}</span></td>
+        <td>{{ doc.created_at[:10] }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="loading">텍스트 문서가 없습니다.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

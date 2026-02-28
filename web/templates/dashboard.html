@@ -26,6 +26,10 @@
     <div class="stat-value">{{ ws_count }}</div>
     <div class="stat-label">워크스페이스</div>
   </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ doc_count }}</div>
+    <div class="stat-label">텍스트 문서</div>
+  </div>
 </div>
 
 <section class="section">
@@ -51,6 +55,32 @@
   </div>
   {% else %}
   <p class="empty-msg">열린 워크스페이스가 없습니다.</p>
+  {% endif %}
+</section>
+
+<section class="section">
+  <h2>열린 텍스트 문서</h2>
+  {% if open_documents %}
+  <div class="table-container">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>제목</th>
+          <th>언어</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for doc in open_documents %}
+        <tr>
+          <td><a href="/text-documents/{{ doc.id }}" style="color:var(--primary); font-weight:500">{{ doc.title }}</a></td>
+          <td>{{ doc.language }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-msg">열린 텍스트 문서가 없습니다.</p>
   {% endif %}
 </section>
 

@@ -1,0 +1,64 @@
+{% extends "layout.html" %}
+{% block title %}텍스트 문서 관리 - OpenSpace{% endblock %}
+{% block page_title %}텍스트 문서 관리{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <div class="toolbar-left" id="batch-toolbar" style="display:none">
+    <button class="btn btn-danger" onclick="batchDeleteDocs()">선택 삭제 (<span id="sel-count">0</span>)</button>
+  </div>
+  <div class="toolbar-right">
+    <button class="btn btn-primary" onclick="showCreateDocModal()">+ 새 문서</button>
+  </div>
+</div>
+
+<div class="table-container">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th style="width:32px"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
+        <th>제목</th>
+        <th>언어</th>
+        <th>상태</th>
+        <th>버전</th>
+        <th>생성일</th>
+        <th>작업</th>
+      </tr>
+    </thead>
+    <tbody id="doc-tbody">
+      <tr><td colspan="7" class="loading">로딩 중...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<template id="doc-form-tpl">
+  <form id="doc-form" onsubmit="submitDocForm(event)">
+    <div class="form-group">
+      <label>문서 제목 *</label>
+      <input type="text" id="f-doc-title" required>
+    </div>
+    <div class="form-group">
+      <label>언어</label>
+      <select id="f-doc-lang">
+        <option value="plaintext">Plain Text</option>
+        <option value="javascript">JavaScript</option>
+        <option value="python">Python</option>
+        <option value="html">HTML</option>
+        <option value="css">CSS</option>
+        <option value="markdown">Markdown</option>
+        <option value="xml">XML</option>
+        <option value="sql">SQL</option>
+        <option value="json">JSON</option>
+      </select>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">취소</button>
+      <button type="submit" class="btn btn-primary">생성</button>
+    </div>
+  </form>
+</template>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/text_documents.js"></script>
+{% endblock %}

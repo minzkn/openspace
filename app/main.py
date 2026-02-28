@@ -14,9 +14,9 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .config import settings
 from .database import get_db, db_session
 from .auth import get_current_user, get_current_user_optional
-from .models import User, Workspace, Template, ChangeLog
+from .models import User, Workspace, Template, ChangeLog, TextDocument
 from .rbac import is_admin_or_above
-from .routers import auth, users, user_fields, templates, workspaces, cells, websocket
+from .routers import auth, users, user_fields, templates, workspaces, cells, websocket, text_documents
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -99,6 +99,7 @@ app.include_router(templates.router)
 app.include_router(workspaces.router)
 app.include_router(cells.router)
 app.include_router(websocket.router)
+app.include_router(text_documents.router)
 
 
 # ------------------------------------------------------------------
@@ -128,7 +129,9 @@ async def dashboard(request: Request):
         ws_count = db.query(Workspace).count()
         tmpl_count = db.query(Template).count()
         user_count = db.query(User).count()
+        doc_count = db.query(TextDocument).count()
         open_workspaces = db.query(Workspace).filter(Workspace.status == "OPEN").all()
+        open_documents = db.query(TextDocument).filter(TextDocument.status == "OPEN").all()
 
         # 최근 변경 이력 (ADMIN+ 전용)
         recent_logs = []
@@ -159,7 +162,9 @@ async def dashboard(request: Request):
             "ws_count": ws_count,
             "tmpl_count": tmpl_count,
             "user_count": user_count,
+            "doc_count": doc_count,
             "open_workspaces": open_workspaces,
+            "open_documents": open_documents,
             "recent_logs": recent_logs,
             "is_admin": is_admin_or_above(user),
         })
@@ -351,5 +356,72 @@ async def workspace_page(workspace_id: str, request: Request):
             "current_user": user,
             "workspace": ws,
             "workspace_data_json": json.dumps(workspace_data),
+            "is_admin": is_admin_or_above(user),
+        })
+
+
+@app.get("/admin/text-documents", response_class=HTMLResponse, include_in_schema=False)
+async def admin_text_documents_page(request: Request):
+    with db_session() as db:
+        user = get_current_user_optional(request, db)
+        if not user:
+            return RedirectResponse("/login")
+        if not is_admin_or_above(user):
+            return RedirectResponse("/dashboard")
+        return jinja.TemplateResponse("text_documents.html", {
+            "request": request,
+            "current_user": user,
+            "is_admin": is_admin_or_above(user),
+        })
+
+
+@app.get("/text-documents", response_class=HTMLResponse, include_in_schema=False)
+async def text_document_list_page(request: Request):
+    with db_session() as db:
+        user = get_current_user_optional(request, db)
+        if not user:
+            return RedirectResponse("/login")
+        documents = db.query(TextDocument).order_by(TextDocument.created_at.desc()).all()
+        return jinja.TemplateResponse("text_document_list.html", {
+            "request": request,
+            "current_user": user,
+            "documents": documents,
+            "is_admin": is_admin_or_above(user),
+        })
+
+
+@app.get("/text-documents/{document_id}", response_class=HTMLResponse, include_in_schema=False)
+async def text_document_page(document_id: str, request: Request):
+    import json as _json
+    from .models import TextDocumentContent
+    with db_session() as db:
+        user = get_current_user_optional(request, db)
+        if not user:
+            return RedirectResponse("/login")
+        doc = db.query(TextDocument).filter(TextDocument.id == document_id).first()
+        if not doc:
+            return RedirectResponse("/text-documents")
+
+        latest = (
+            db.query(TextDocumentContent)
+            .filter(TextDocumentContent.document_id == doc.id)
+            .order_by(TextDocumentContent.version.desc())
+            .first()
+        )
+
+        document_data = {
+            "id": doc.id,
+            "title": doc.title,
+            "language": doc.language,
+            "status": doc.status,
+            "version": doc.version,
+            "content": latest.content if latest else "",
+        }
+
+        return jinja.TemplateResponse("text_document.html", {
+            "request": request,
+            "current_user": user,
+            "document": doc,
+            "document_data_json": _json.dumps(document_data),
             "is_admin": is_admin_or_above(user),
         })

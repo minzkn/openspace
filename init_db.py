@@ -53,6 +53,7 @@ def apply_incremental_migrations(conn):
         "011_sheet_protected.sql",
         "012_print_settings.sql",
         "013_outline_groups.sql",
+        "014_text_documents.sql",
     ]
     for fname in migrations:
         path = ROOT / "migrations" / fname
